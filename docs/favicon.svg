@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A flat-top hexagon tile lit from one corner, in the app's warm palette. -->
+  <defs>
+    <radialGradient id="glow" cx="0.82" cy="0.5" r="0.95">
+      <stop offset="0" stop-color="#fff1d6"/>
+      <stop offset="0.45" stop-color="#ffb35c"/>
+      <stop offset="1" stop-color="#c8641e"/>
+    </radialGradient>
+  </defs>
+  <polygon points="62,32 47,58 17,58 2,32 17,6 47,6" fill="#2a231c"/>
+  <polygon points="57,32 44.5,53.6 19.5,53.6 7,32 19.5,10.4 44.5,10.4" fill="url(#glow)"/>
+</svg>

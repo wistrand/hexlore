@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>hexlore</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root { --bg: #15120f; --fg: #eee4d6; --muted: #8a7f72; --line: #2c2620; --accent: #ffcf8a; }
   * { box-sizing: border-box; }
@@ -615,10 +616,54 @@ function rimLight(h, p, n, lights) {
   return sum ? scale(tint, tone(sum) / sum) : [0, 0, 0];
 }
 
+// LED ramp: the panels ease each LED toward a new color over a short time instead of
+// switching, so quick changes look softer on the wall than an instant redraw. The
+// preview does the same: every zone's displayed color moves toward its target
+// (shownColor) exponentially with time constant LED_FADE_MS, about 95% of the way after
+// three of them. The value is a by-eye estimate, not measured. paintZone() marks a
+// tile as changed; stepFades() advances and draws changed tiles once per frame until
+// they settle. A tile drawn for the first time since render() shows its current faded
+// color at once, so re-rendering doesn't flash dark.
+const LED_FADE_MS = 70;
+const faded = new Map(); // zone id -> displayed [r, g, b]
+const fading = new Set(); // indices into hexes still moving
+let fadeRaf = 0, lastFadeAt = null;
 function paintZone(id) {
-  const h = hexes[zoneHex.get(id)];
+  const hi = zoneHex.get(id), h = hexes[hi];
   if (!h) return;
-  const lights = h.ids.map((zid) => panelColor(shownColor(zid)));
+  if (!h.drawn) {
+    for (const zid of h.ids) if (!faded.has(zid)) faded.set(zid, shownColor(zid));
+    drawHex(h);
+    h.drawn = true;
+  }
+  fading.add(hi);
+  fadeRaf ||= requestAnimationFrame(stepFades);
+}
+function stepFades(now) {
+  const dt = lastFadeAt === null ? 0 : Math.min(100, now - lastFadeAt);
+  lastFadeAt = now;
+  const k = 1 - Math.exp(-dt / LED_FADE_MS);
+  for (const hi of fading) {
+    const h = hexes[hi];
+    if (!h) { fading.delete(hi); continue; }
+    let moving = false;
+    for (const zid of h.ids) {
+      const target = shownColor(zid), cur = faded.get(zid) ?? target;
+      faded.set(zid, cur.map((v, i) => {
+        const d = target[i] - v;
+        if (Math.abs(d) < 0.5) return target[i];
+        moving = true;
+        return v + d * k;
+      }));
+    }
+    drawHex(h);
+    if (!moving) fading.delete(hi);
+  }
+  fadeRaf = fading.size ? requestAnimationFrame(stepFades) : 0;
+  if (!fadeRaf) lastFadeAt = null;
+}
+function drawHex(h) {
+  const lights = h.ids.map((zid) => panelColor(faded.get(zid) ?? shownColor(zid)));
   // Device master brightness scales the final output, after tone(): applied before it,
   // the saturation curve would swallow most of the change.
   const M = masterLevel;

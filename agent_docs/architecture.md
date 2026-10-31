@@ -417,6 +417,11 @@ Consequences:
   are brightest), and a small ambient term. Corners are shared samples, so there
   are no jumps at vertices; butt caps avoid overlap hotspots under screen blending. The
   falloff values are fitted by eye to that photo, not measured.
+- LED ramp (observed by the user): the panels ease each LED to a new color instead
+  of switching, even with transition 0, so quick changes look softer on the wall.
+  The preview eases each zone toward its target exponentially (`LED_FADE_MS` = 70,
+  about 95% after 210 ms; `paintZone()` marks, `stepFades()` advances, `drawHex()`
+  draws). The time constant is a by-eye estimate, not measured.
 
 ### Orientation (verified)
 
