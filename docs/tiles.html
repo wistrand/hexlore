@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hexlore: Elements tiles</title>
+<style>
+  :root { --bg: #15120f; --fg: #eee4d6; --muted: #8a7f72; --line: #2c2620; --accent: #ffcf8a; --panel: #1c1813; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  body { padding: 24px 16px 48px; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 36px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+  h3 { font-size: 15px; margin: 22px 0 6px; color: var(--accent); font-weight: 600; }
+  p, li { max-width: 72ch; }
+  .lead { color: var(--muted); margin: 0 0 18px; }
+  a { color: var(--accent); }
+  code, pre { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; margin: 10px 0 14px; font-size: 14px; }
+  th, td { text-align: left; padding: 5px 12px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  td.num, th.num { font-variant-numeric: tabular-nums; }
+  .wrap { overflow-x: auto; }
+  figure { margin: 16px 0; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  figcaption { color: var(--muted); font-size: 14px; max-width: 46ch; }
+  .note { color: var(--muted); font-size: 14px; }
+  .ok { color: #9fd49a; }
+  .warn { color: var(--accent); }
+  .mono { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  nav { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+  nav a { margin-right: 12px; }
+</style>
+</head>
+<body>
+<main>
+<nav><a href="/">hexlore</a> <a href="#hardware">Hardware</a> <a href="#layout">Layout</a> <a href="#stream">Streaming</a> <a href="#touch">Touch</a> <a href="#ids">Ids</a> <a href="#mapping">Mapping</a> <a href="#live">Live</a></nav>
+<h1>Elements tiles: layout, protocol and touch mapping</h1>
+<p class="lead">What the server in <code>src/server.mjs</code> knows about the Nanoleaf Elements hexagons, and how it turns touches on the panel into input. Findings are from one NL52 controller on firmware 12.4.1; items marked inferred have not been confirmed by Nanoleaf.</p>
+
+<h2 id="hardware">The tile</h2>
+<p>Each hexagon has six LEDs, one in each corner, and one capacitive touch sensor. The LAN API knows the LEDs as six separate zones with their own ids; the touch sensor reports under a seventh id that appears nowhere in the layout.</p>
+<figure>
+<svg width="260" height="240" viewBox="-130 -120 260 240" aria-label="Hexagon with six corner zones and a touch sensor">
+  <polygon points="100,0 50,86.6 -50,86.6 -100,0 -50,-86.6 50,-86.6" fill="#2a231c" stroke="#5a4e40" stroke-width="2"/>
+  <g font-size="12" fill="#eee4d6" text-anchor="middle">
+    <circle cx="90" cy="0" r="9" fill="#ffcf8a"/><text x="112" y="4" fill="#8a7f72">o 0</text>
+    <circle cx="45" cy="-78" r="9" fill="#ffcf8a"/><text x="60" y="-95" fill="#8a7f72">o 60</text>
+    <circle cx="-45" cy="-78" r="9" fill="#ffcf8a"/><text x="-60" y="-95" fill="#8a7f72">o 120</text>
+    <circle cx="-90" cy="0" r="9" fill="#ffcf8a"/><text x="-114" y="4" fill="#8a7f72">o 180</text>
+    <circle cx="-45" cy="78" r="9" fill="#ffcf8a"/><text x="-60" y="104" fill="#8a7f72">o 240</text>
+    <circle cx="45" cy="78" r="9" fill="#ffcf8a"/><text x="60" y="104" fill="#8a7f72">o 300</text>
+    <circle cx="0" cy="0" r="22" fill="none" stroke="#ffcf8a" stroke-dasharray="4 3"/>
+    <text x="0" y="4">touch</text>
+  </g>
+</svg>
+<figcaption>Six corner zones (LEDs) at 50/67 of the side length from the center, each with an orientation <code>o</code> pointing from the center to its corner. The touch sensor covers the whole tile. Flat-top hexagon, side 67 layout units.</figcaption>
+</figure>
+<table>
+<tr><th>Field</th><th>Value</th></tr>
+<tr><td>Model</td><td>NL52, Nanoleaf Elements (wood look, white light only)</td></tr>
+<tr><td>Zones per tile</td><td>6 lit corners, <code>shapeType</code> 15</td></tr>
+<tr><td>Controller</td><td>one extra entry, <code>panelId</code> 0, <code>shapeType</code> 12, does not light; sits 10 units outside a tile edge, where it plugs in (inferred)</td></tr>
+<tr><td>Touch</td><td>one id per tile, reported only through the touch stream</td></tr>
+<tr><td>Ports</td><td>16021 REST and SSE, 60222 streaming (UDP to device), touch UDP (device to server, port chosen by server)</td></tr>
+</table>
+
+<h2 id="layout">Layout</h2>
+<p><code>GET /api/v1/&lt;token&gt;/panelLayout/layout</code> returns <code>sideLength</code> (67) and <code>positionData</code>, one entry per zone:</p>
+<pre><code>{"panelId": 20201, "x": 201, "y": 158, "o": 360, "shapeType": 15}</code></pre>
+<p>Zones are grouped into tiles by geometry, not by list order: the tile center is <code>(x, y)</code> minus 50 units in direction <code>o</code>, and zones whose centers agree belong together. <code>o</code> is not reduced modulo 360 (values from 60 to 660 occur); it is <code>o mod 360</code> that gives the direction, while the raw value orders the corners (see <a href="#ids">Ids</a>). <code>y</code> points up. When tiles are added or rotated the controller recomputes the whole layout and may shift every coordinate; ids stay with the hardware.</p>
+
+<h2 id="stream">Streaming (extControl v2)</h2>
+<p>The server switches the device to <code>extControl</code> with <code>PUT /effects</code> and then sends UDP frames to port 60222, on every change and once a second as a keepalive:</p>
+<table>
+<tr><th>Field</th><th>Size</th><th>Meaning</th></tr>
+<tr><td>count</td><td>u16</td><td>number of zone records</td></tr>
+<tr><td>panelId</td><td>u16</td><td>zone id from the layout</td></tr>
+<tr><td>r g b w</td><td>4 x u8</td><td>color; w unused</td></tr>
+<tr><td>transition</td><td>u16</td><td>fade time in 100 ms units; 0 is a hard cut</td></tr>
+</table>
+<p class="note">All values big-endian. One record per zone, 8 bytes each; the whole layout fits in one packet.</p>
+
+<h2 id="touch">Touch protocol</h2>
+<p>Touch comes in two forms. The server opens the gesture stream with a header, and the device then streams raw touch data over UDP for as long as that connection stays open.</p>
+<pre><code>GET /api/v1/&lt;token&gt;/events?id=4
+TouchEventsPort: 40555</code></pre>
+<h3>Gestures (SSE on the same connection)</h3>
+<pre><code>id: 4
+data: {"events":[{"panelId":-1,"gesture":5}]}</code></pre>
+<p><code>panelId</code> is always -1 on Elements, so gestures carry no tile. Seen: 2 (swipe up) and 5 (swipe right), numbered as in Nanoleaf's documentation. The server ignores these.</p>
+<h3>Raw touch (UDP to the port named in the header)</h3>
+<table>
+<tr><th>Field</th><th>Size</th><th>Meaning</th></tr>
+<tr><td>count</td><td>u16</td><td>number of tile records</td></tr>
+<tr><td>touch id</td><td>u16</td><td>the tile's touch id</td></tr>
+<tr><td>type, strength</td><td>u8</td><td>high nibble type, low nibble strength 0 to 15</td></tr>
+<tr><td>swiped from</td><td>u16</td><td>previous tile for type 4, else 65535</td></tr>
+</table>
+<table>
+<tr><th>Type</th><th>Name</th><th>Observed</th></tr>
+<tr><td class="num">0</td><td>hover</td><td>strength 1 to 4, a hand a few centimeters away; often right before contact</td></tr>
+<tr><td class="num">1</td><td>down</td><td>strength 0; a settling finger can repeat it within 150 ms</td></tr>
+<tr><td class="num">2</td><td>hold</td><td>strength 15, every 140 ms while touched</td></tr>
+<tr><td class="num">3</td><td>up</td><td>strength 0</td></tr>
+<tr><td class="num">4</td><td>swipe</td><td>strength 2 to 15 on the tile the finger arrives at; <code>swiped from</code> names where it came from</td></tr>
+</table>
+<p class="note">Packets arrive about 7 times a second while anything is touched or near a tile, several records per packet when several tiles are involved. Resolution is one reading per tile, not per corner.</p>
+
+<h2 id="ids">Corner ids and touch ids</h2>
+<p>The touch id is not in the REST layout, but it can be computed from the tile's corner ids. Model fitted to 20 tiles mapped by hand; it predicted the ids of tiles added later, and it matches all 29 tiles in three sample layouts from other installations found in the Nanoleaf Android app.</p>
+<p>The touch id is the hexagon's own panel id. The app's internal layout lists each tile as an <code>APEX_HEX</code> entry (shape type 14) next to its six <code>APEX_KITE</code> corner zones (type 15); the REST API leaves the type 14 entries out. In that layout the hexagon's <code>o</code> is the first kite's <code>o</code> minus 60.</p>
+<ol>
+<li>Sort a tile's six corners by raw <code>o</code>, rising. Call the first corner's hidden counter value <code>j</code>.</li>
+<li>Corner <code>i</code> has id <code>K ^ L(j + i)</code> for <code>i</code> = 0 to 5, and the touch id is <code>K ^ L(j + 6)</code>. <code>K</code> is a per-tile constant, <code>L</code> is the same for every tile.</li>
+<li><code>L</code> is the linear part of a reflected CRC-16 with polynomial 0x8005 (the CRC-16/ARC, MODBUS, USB and MAXIM family) over a little-endian counter. It is linear over XOR, so <code>L(a ^ b) = L(a) ^ L(b)</code>, and it is fixed by its values on powers of two:</li>
+</ol>
+<div class="wrap"><table class="mono">
+<tr><th>k</th><td>0</td><td>1</td><td>2</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td><td>8</td><td>9</td><td>10</td><td>11</td><td>12</td><td>13</td><td>14</td><td>15</td></tr>
+<tr><th>L(2^k)</th><td>90c1</td><td>6181</td><td>c302</td><td>c607</td><td>cc0d</td><td>d819</td><td>f031</td><td>a061</td><td>00c1</td><td>0182</td><td>0304</td><td>0608</td><td>0c10</td><td>1820</td><td>3040</td><td>6080</td></tr>
+</table></div>
+<p>Because <code>K</code> cancels, the XOR of two neighboring ids is <code>L((j+i) ^ (j+i+1))</code>, and <code>n ^ (n+1)</code> is always of the form <code>2^m - 1</code>: 1 when <code>n</code> is even, 3 when <code>n</code> ends in 01, 7 for 011, 15 or more when <code>n</code> ends in 111. So the five steps between corners show the pattern of <code>j mod 8</code>, and from that the step to the touch id follows:</p>
+<table class="mono">
+<tr><th>n ^ (n+1)</th><th>L</th><th>when</th></tr>
+<tr><td>1</td><td>90c1</td><td>n even</td></tr>
+<tr><td>3</td><td>f140</td><td>n = 1 mod 4</td></tr>
+<tr><td>7</td><td>3242</td><td>n = 3 mod 8</td></tr>
+<tr><td>15</td><td>f445</td><td>n = 7 mod 16</td></tr>
+<tr><td>31</td><td>3848</td><td>n = 15 mod 32</td></tr>
+<tr><td>63</td><td>e051</td><td>n = 31 mod 64</td></tr>
+<tr><td>127</td><td>1060</td><td>n = 63 mod 128, and so on</td></tr>
+</table>
+<p>The one blind spot: when <code>j + 6</code> is a multiple of 8, the step to the touch id is <code>L(15)</code>, <code>L(31)</code>, <code>L(63)</code> or higher depending on bits of <code>j</code> that the corners never reveal. The server then lists all 13 candidates; half the time the right one is <code>L(15)</code>. In practice a candidate list has matched only one tile every time.</p>
+<p><code>K</code> differs from tile to tile and no two of the 20 tiles are near each other in counter space, so the CRC input also holds per-tile data (a serial number, or counter bits above 16). It is not needed for prediction. How the model was found: <code>L(4)</code> turned out to be <code>L(2)</code> shifted one bit, which pointed at a shift register; the bit-reflected shift fit all measured values with one polynomial and then predicted the four carry values above with no free parameter.</p>
+
+<h2 id="mapping">Mapping touches to tiles</h2>
+<p>The server keeps <code>data/touch-map.json</code>: touch id to the six corner ids of its tile. It fills the map in three ways, in this order:</p>
+<ol>
+<li><strong>Prediction.</strong> The first packet from an unknown touch id, hover included, is matched against every tile's predicted touch id(s). A unique match is stored at once. This is how new tiles get mapped in normal use.</li>
+<li><strong>Automatic run.</strong> If prediction is ambiguous, a down or hold from an unknown id starts a mapping run: tiles without a touch id light up one at a time, top row first, and the next new id with a down or hold claims the lit tile. The id that started the run must lift first, since its finger is usually not on the lit tile. With a single unmapped tile it is assigned directly. Auto-start waits until the layout has been unchanged for 15 s, because a tile touched while the controller is still taking in new tiles is not in the list yet.</li>
+<li><strong>Map touch button.</strong> The same run, started by hand. It visits only unmapped tiles; when every tile is mapped it remaps all of them. Any id can claim the lit tile, including one mapped earlier, so a wrong entry heals by touching the right tile.</li>
+</ol>
+<p>Ids belong to the tile hardware: rotating a tile kept its mapping, and the layout change did not require a remap. Moving a tile to another position is expected to behave the same (untested).</p>
+<p>What touches do once mapped is set in the Touch sheet of the main page: <code>off</code>, <code>glow</code> (touched and hovered tiles light up and fade), <code>ripple</code> (glow plus a ring spreading from the tile) or <code>paint</code> (fill the tile with the brush).</p>
+
+<h2 id="live">Live: this layout</h2>
+<p class="note" id="liveNote">Loading from <code>/api/tiles</code>.</p>
+<div class="wrap"><table id="liveTable" hidden>
+<thead><tr><th class="num">#</th><th class="num">center</th><th>corner ids by rising o</th><th class="num">touch id</th><th>predicted</th><th>state</th></tr></thead>
+<tbody></tbody>
+</table></div>
+<script>
+(async () => {
+  const note = document.getElementById("liveNote"), table = document.getElementById("liveTable");
+  try {
+    const d = await (await fetch("/api/tiles")).json();
+    const tb = table.querySelector("tbody");
+    let mapped = 0, exact = 0;
+    d.tiles.forEach((t, i) => {
+      const tr = document.createElement("tr");
+      const pred = t.predicted.length === 1 ? String(t.predicted[0]) : `${t.predicted.length} candidates`;
+      let state, cls;
+      if (t.touch === null) { state = "unmapped"; cls = "warn"; }
+      else if (t.predicted.includes(t.touch)) { state = t.predicted.length === 1 ? "mapped, exact match" : "mapped, in candidates"; cls = "ok"; }
+      else { state = "mapped, prediction differs"; cls = "warn"; }
+      if (t.touch !== null) mapped++;
+      if (t.predicted.length === 1) exact++;
+      tr.innerHTML = `<td class="num">${i + 1}</td><td class="num">${t.x}, ${t.y}</td>` +
+        `<td class="mono">${t.corners.map((c) => `${c.id}<span style="color:var(--muted)">/${c.o}</span>`).join(" ")}</td>` +
+        `<td class="num">${t.touch ?? "-"}</td><td class="mono">${pred}</td><td class="${cls}">${state}</td>`;
+      tb.appendChild(tr);
+    });
+    table.hidden = false;
+    const ctrl = d.controller ? ` Controller entry at (${d.controller.x}, ${d.controller.y}).` : "";
+    note.textContent = `${d.tiles.length} tiles, ${mapped} mapped, ${exact} with an exact prediction.${ctrl}${d.sim ? " Simulator: ids are synthetic, predictions do not apply." : ""}`;
+  } catch (e) {
+    note.textContent = `Could not load /api/tiles: ${e.message}`;
+  }
+})();
+</script>
+</main>
+</body>
+</html>

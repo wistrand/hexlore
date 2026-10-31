@@ -1,0 +1,1241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>hexlore</title>
+<style>
+  :root { --bg: #15120f; --fg: #eee4d6; --muted: #8a7f72; --line: #2c2620; --accent: #ffcf8a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 15px/1.3 system-ui, sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column; }
+  /* Header, stage and dock have fixed sizes; control sheets float over the bottom of the
+     stage, so opening one never re-lays out the tiles. */
+  header { flex: none; height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px;
+    white-space: nowrap; overflow: hidden; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; flex: none; }
+  #status { font-size: 12px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden;
+    text-overflow: ellipsis; text-align: right; }
+  #status.warn { color: var(--accent); }
+  #resume { flex: none; padding: 6px 10px; border-color: var(--accent); color: var(--accent); }
+  main { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 8px 16px;
+    perspective: 1400px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none; cursor: grab; }
+  main.rotating { cursor: grabbing; }
+  #scene { position: relative; width: 100%; height: 100%; max-width: 720px; transform-style: preserve-3d; }
+  #scene svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  #scene svg.passive { pointer-events: none; }
+  #canvas .zone { cursor: crosshair; }
+  /* Zone outlines are hidden; the zone(s) under the mouse get .hover (brush footprint). */
+  .zone { fill: transparent; stroke: transparent; stroke-width: 0.6; stroke-linejoin: round; }
+  .zone.hover { stroke: rgba(255,240,220,0.18); fill: rgba(255,240,220,0.03); }
+  .ghost { fill: rgba(255,240,220,0.03); stroke: rgba(255,240,220,0.3); stroke-width: 1.2;
+    stroke-dasharray: 5 4; cursor: copy; }
+  .ghost:hover { fill: rgba(255,207,138,0.12); stroke: var(--accent); }
+  #canvas.editing .zone { cursor: pointer; }
+  .pop { transform-box: fill-box; transform-origin: center; animation: pop 350ms cubic-bezier(.2,.9,.3,1.25); }
+  @keyframes pop { from { transform: scale(0.2); opacity: 0; } }
+  .fade { animation: fade 350ms ease-out; }
+  @keyframes fade { from { opacity: 0; } }
+  #canvas.editing .zone.hover { stroke: rgba(255,120,90,0.6); fill: rgba(255,120,90,0.15); }
+  .hex { stroke: var(--line); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
+  footer { flex: none; position: relative; z-index: 10; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 100%; max-height: 60vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px; padding: 12px 16px;
+    background: rgba(21, 18, 15, 0.94); border-top: 1px solid var(--line);
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35); }
+  .sheet[hidden] { display: none; }
+  .hint { color: var(--muted); font-size: 13px; margin: 0; }
+  #dock { height: 56px; display: flex; align-items: center; gap: 4px; padding: 0 12px;
+    border-top: 1px solid var(--line); overflow-x: auto; white-space: nowrap; }
+  #dock > * { flex: none; }
+  #dock .spacer { flex: 1 0 8px; }
+  .tab { position: relative; display: inline-flex; align-items: center; gap: 6px; background: none;
+    color: var(--muted); border: 1px solid transparent; border-radius: 8px; padding: 8px 11px; font: inherit; cursor: pointer; }
+  .tab[hidden] { display: none; }
+  .tab:hover { color: var(--fg); }
+  @media (max-width: 440px) {
+    #dock { gap: 2px; padding: 0 6px; }
+    .tab { padding: 8px 7px; }
+    #dock .spacer { flex-basis: 2px; }
+    button.tool.icon { min-width: 38px; padding: 7px 8px; }
+    .sheet { padding: 10px 12px; }
+  }
+  .tab.active { color: var(--accent); background: #241f1a; border-color: var(--line); }
+  /* Something of this group is running (an effect); shown even with the sheet folded. */
+  .tab.on::after { content: ""; position: absolute; top: 5px; right: 4px; width: 6px; height: 6px;
+    border-radius: 50%; background: var(--accent); }
+  .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #4a4036; }
+  .dot.erase { background: repeating-linear-gradient(45deg, transparent 0 2px, #6a5e50 2px 3px) !important; }
+  button.tool.icon { min-width: 42px; padding: 7px 10px; font-size: 18px; line-height: 1; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { background: #241f1a; color: var(--fg); border: 0; border-right: 1px solid var(--line);
+    padding: 9px 12px; font: inherit; cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button.active { background: var(--accent); color: var(--bg); }
+  a.tool { background: #241f1a; color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 12px; text-decoration: none; }
+  a.tool:hover { border-color: var(--accent); color: var(--accent); }
+  .swatch { width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; padding: 0; }
+  .swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+  button.tool { background: #241f1a; color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 12px; font: inherit; cursor: pointer; }
+  button.tool.active { border-color: var(--accent); color: var(--accent); }
+  button.tool:disabled { opacity: 0.4; cursor: default; }
+  select.tool { background: #241f1a; color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 10px; font: inherit; }
+  .count { font-variant-numeric: tabular-nums; color: var(--accent); font-size: 14px; min-width: 7ch; }
+  label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  input[type=range] { width: 160px; accent-color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>hexlore</h1>
+  <span id="status">connecting</span>
+  <button class="tool" id="resume" hidden title="Take the panels back from the effect that replaced the painting">Resume painting</button>
+</header>
+<main id="stage"><div id="scene">
+  <svg id="wall" class="passive" aria-hidden="true"></svg>
+  <svg id="canvas" aria-label="Panel layout"></svg>
+</div></main>
+<!-- One sheet of controls at a time, picked in the dock; the open tab folds it away again. -->
+<footer>
+  <section class="sheet" id="sheet-paint" data-sheet="paint" hidden>
+    <div class="row">
+      <div class="row" id="swatches"></div>
+      <label>Brightness <input type="range" id="bri" min="5" max="100" value="100" title="[ and ]"></label>
+    </div>
+    <div class="row">
+      <button class="tool" id="brushMode" title="T: paint one corner or the whole tile">Brush: corner</button>
+      <button class="tool" id="pick" title="I (or Alt-click): copy a zone's color into the brush">Pick</button>
+      <button class="tool" id="erase" title="E">Erase</button>
+      <button class="tool" id="dir" title="Long press on a zone ramps its intensity in this direction">Hold: brighter</button>
+      <button class="tool" id="fill" title="F: fill everything with the brush">Fill</button>
+      <button class="tool" id="clear" title="Shift+Delete">Clear</button>
+    </div>
+    <div class="row">
+      <select id="scenes" class="tool" aria-label="Saved scenes"><option value="">Scenes</option></select>
+      <button class="tool" id="sceneSave">Save</button>
+      <button class="tool" id="sceneDelete">Delete</button>
+    </div>
+  </section>
+  <section class="sheet" id="sheet-effects" data-sheet="effects" hidden>
+    <div class="row" id="effects"></div>
+    <p class="hint" id="effectHint"></p>
+  </section>
+  <section class="sheet" id="sheet-touch" data-sheet="touch" hidden>
+    <div class="row">
+      <div class="seg" id="touchModes" role="group" aria-label="What touching a tile does">
+        <button data-mode="off" title="Touch does nothing">Off</button>
+        <button data-mode="glow" title="Touched and hovered tiles glow">Glow</button>
+        <button data-mode="ripple" title="Glow plus a ring spreading from the tile">Ripple</button>
+        <button data-mode="paint" title="Fill the touched tile with the brush">Paint</button>
+      </div>
+      <button class="tool" id="touchMap" title="Lights each unmapped tile in turn (every tile when all are mapped); touch each lit tile">Map touch</button>
+      <span class="hint" id="touchInfo"></span>
+    </div>
+  </section>
+  <section class="sheet" id="sheet-view" data-sheet="view" hidden>
+    <div class="row">
+      <label>Panel brightness <input type="range" id="master" min="0" max="100" value="100" title="Device brightness for everything"></label>
+      <button class="tool" id="takeover" title="Re-enable streaming if another effect took over">Reconnect</button>
+    </div>
+    <div class="row">
+      <button class="tool" id="flipY">Flip</button>
+      <button class="tool" id="showCtrl" hidden title="Show where the controller attaches (position from the device layout)">Controller</button>
+      <button class="tool" id="resetView" title="Drag empty space (or shift/right-drag anywhere) to rotate and tilt">Reset view</button>
+      <a class="tool" href="/tiles" title="How the tiles, the protocol and the touch mapping work">About the tiles</a>
+    </div>
+  </section>
+  <section class="sheet" id="sheet-layout" data-sheet="layout" hidden>
+    <div class="row" id="layoutTools">
+      <span id="panelCount" class="count"></span>
+      <button class="tool" id="symmetry" title="Adds and removes are repeated around the center">Symmetry: off</button>
+      <button class="tool" id="grow" title="Add a ring of tiles around the shape">Grow</button>
+      <button class="tool" id="shrink" title="Remove the outer ring">Shrink</button>
+      <button class="tool" id="fillHoles" title="Fill enclosed gaps">Fill holes</button>
+      <button class="tool" id="symmetrize" title="Complete the shape to the chosen symmetry">Symmetrize</button>
+    </div>
+    <p class="hint">Tap a dashed slot to add a tile, tap a tile to remove it.</p>
+  </section>
+  <nav id="dock" aria-label="Control groups">
+    <button class="tab" data-tab="paint" aria-controls="sheet-paint" title="Colors, brush tools, saved scenes"><span class="dot" id="brushDot"></span>Paint</button>
+    <button class="tab" data-tab="effects" aria-controls="sheet-effects" title="Animations from src/effects/">Effects</button>
+    <button class="tab" data-tab="touch" aria-controls="sheet-touch" hidden title="What touching the panel does">Touch</button>
+    <button class="tab" data-tab="view" aria-controls="sheet-view" title="Panel brightness, view, reconnect">View</button>
+    <button class="tab" data-tab="layout" aria-controls="sheet-layout" hidden title="Simulator: add and remove tiles">Layout</button>
+    <span class="spacer"></span>
+    <button class="tool icon" id="undo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#8630;</button>
+    <button class="tool icon" id="redo" title="Redo (Ctrl+Shift+Z / Ctrl+Y)" aria-label="Redo" disabled>&#8631;</button>
+  </nav>
+</footer>
+<script>
+// Elements panels are warm/cool white only; palette stays in that range.
+const PALETTE = [
+  [255, 120, 20], [255, 150, 50], [255, 180, 90], [255, 205, 140],
+  [255, 228, 190], [255, 245, 230], [230, 240, 255],
+];
+const svg = document.getElementById("canvas");
+const wallSvg = document.getElementById("wall");
+const stage = document.getElementById("stage");
+const scene = document.getElementById("scene");
+const statusEl = document.getElementById("status");
+const bri = document.getElementById("bri");
+const eraseBtn = document.getElementById("erase");
+const flipBtn = document.getElementById("flipY");
+const els = new Map();
+let brush = PALETTE[3];
+let erasing = false;
+let flipY = load("flipY", false);
+let showCtrl = load("showCtrl", false);
+const ctrlBtn = document.getElementById("showCtrl");
+let layout;
+
+function load(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } }
+function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+
+const rgbCss = ([r, g, b]) => `rgb(${r},${g},${b})`;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const WOOD = "#2a231c";
+
+function currentColor() {
+  if (erasing) return [0, 0, 0];
+  const k = Number(bri.value) / 100;
+  return brush.map((v) => Math.round(v * k));
+}
+
+// Group corner zones into tiles without relying on list order (which can change when
+// panels are reconfigured): `o` mod 360 is the direction from the tile center to the
+// zone, and zones sit at ZONE_R x sideLength from that center (50/67 on this firmware).
+const ZONE_R = 50 / 67;
+function hexGroups(zones, side) {
+  const groups = [];
+  for (const z of zones) {
+    const a = ((z.o % 360) * Math.PI) / 180;
+    const ex = z.x - ZONE_R * side * Math.cos(a), ey = z.y - ZONE_R * side * Math.sin(a);
+    let g = groups.find((g) => Math.hypot(g.ex - ex, g.ey - ey) < side * 0.3);
+    if (!g) groups.push((g = { ex, ey, zones: [] }));
+    g.zones.push(z);
+  }
+  // Center from the zones themselves when the tile is complete, else the estimate.
+  return groups.map((g) => {
+    const n = g.zones.length;
+    const cx = n === 6 ? g.zones.reduce((s, z) => s + z.x, 0) / n : g.ex;
+    const cy = n === 6 ? g.zones.reduce((s, z) => s + z.y, 0) / n : g.ey;
+    return { cx, cy, zones: g.zones };
+  });
+}
+
+// Simulator layout editing. Same axial grid as server.mjs simLayout(): flat-top hexes,
+// neighbors at 30 + 60k degrees, center spacing sqrt(3) x side.
+let editLayout = false;
+const NEIGHBORS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+const cellCenter = (q, r, side) => [400 + 1.5 * side * q, 400 + Math.sqrt(3) * side * (r + q / 2)];
+function ghostCells(tiles) {
+  if (!tiles.length) return [[0, 0]];
+  const taken = new Set(tiles.map(([q, r]) => `${q},${r}`));
+  const out = new Map();
+  for (const [q, r] of tiles) for (const [dq, dr] of NEIGHBORS) {
+    const key = `${q + dq},${r + dr}`;
+    if (!taken.has(key)) out.set(key, [q + dq, r + dr]);
+  }
+  return [...out.values()];
+}
+async function setTiles(tiles) {
+  await fetch("/api/sim/tiles", { method: "POST", body: JSON.stringify({ tiles }) });
+}
+const tileOfZone = (id) => layout.zones.find((z) => z.panelId === id)?.tile;
+
+// Shape tools. Axial (q, r) on the flat-top grid: rotating 60 degrees maps
+// (q, r) -> (-r, q + r); mirroring left-right maps (q, r) -> (-q, q + r).
+const cellKey = ([q, r]) => `${q},${r}`;
+const SYMMETRIES = ["off", "mirror", "3-fold", "6-fold"];
+let symmetry = load("symmetry", "off");
+let symCenter = null; // fixed while editing, so repeated adds stay consistent
+const rot60 = ([q, r]) => [-r, q + r];
+const mirrorLR = ([q, r]) => [-q, q + r];
+function centerCell(tiles) {
+  if (!tiles.length) return [0, 0];
+  // Pixel centroid (unit side) back to the nearest cell, via cube rounding.
+  let x = 0, y = 0;
+  for (const [q, r] of tiles) { x += 1.5 * q; y += Math.sqrt(3) * (r + q / 2); }
+  x /= tiles.length; y /= tiles.length;
+  const fq = x / 1.5, fr = y / Math.sqrt(3) - fq / 2, fs = -fq - fr;
+  let q = Math.round(fq), r = Math.round(fr), s2 = Math.round(fs);
+  const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(s2 - fs);
+  if (dq > dr && dq > ds) q = -r - s2; else if (dr > ds) r = -q - s2;
+  return [q, r];
+}
+function images(cell) {
+  const c = symCenter ?? [0, 0];
+  const d = [cell[0] - c[0], cell[1] - c[1]];
+  const out = [d];
+  if (symmetry === "mirror") out.push(mirrorLR(d));
+  else if (symmetry !== "off") {
+    const n = symmetry === "3-fold" ? 3 : 6, stepRot = n === 3 ? (p) => rot60(rot60(p)) : rot60;
+    for (let i = 1, p = d; i < n; i++) out.push((p = stepRot(p)));
+  }
+  return out.map(([q, r]) => [q + c[0], r + c[1]]);
+}
+function addCells(tiles, cells) {
+  const have = new Set(tiles.map(cellKey));
+  return [...tiles, ...cells.filter((c) => !have.has(cellKey(c)) && have.add(cellKey(c)))];
+}
+function removeCells(tiles, cells) {
+  const drop = new Set(cells.map(cellKey));
+  return tiles.filter((t) => !drop.has(cellKey(t)));
+}
+const growShape = (tiles) => addCells(tiles, ghostCells(tiles));
+function shrinkShape(tiles) {
+  const have = new Set(tiles.map(cellKey));
+  const inner = tiles.filter(([q, r]) => NEIGHBORS.every(([dq, dr]) => have.has(cellKey([q + dq, r + dr]))));
+  return inner.length ? inner : tiles;
+}
+function fillHoles(tiles) {
+  if (!tiles.length) return tiles;
+  // Flood the empty cells from outside a padded bounding box; empty cells not reached are holes.
+  const have = new Set(tiles.map(cellKey));
+  const qs = tiles.map((t) => t[0]), rs = tiles.map((t) => t[1]);
+  const q0 = Math.min(...qs) - 2, q1 = Math.max(...qs) + 2, r0 = Math.min(...rs) - 2, r1 = Math.max(...rs) + 2;
+  const inBox = ([q, r]) => q >= q0 && q <= q1 && r >= r0 && r <= r1;
+  const seen = new Set([cellKey([q0, r0])]);
+  const queue = [[q0, r0]];
+  while (queue.length) {
+    const [q, r] = queue.pop();
+    for (const [dq, dr] of NEIGHBORS) {
+      const n = [q + dq, r + dr], k = cellKey(n);
+      if (inBox(n) && !have.has(k) && !seen.has(k)) { seen.add(k); queue.push(n); }
+    }
+  }
+  const holes = [];
+  for (let q = q0; q <= q1; q++) for (let r = r0; r <= r1; r++) {
+    const k = cellKey([q, r]);
+    if (!have.has(k) && !seen.has(k)) holes.push([q, r]);
+  }
+  return addCells(tiles, holes);
+}
+const symmetrize = (tiles) => addCells(tiles, tiles.flatMap(images));
+
+function svgEl(tag, attrs, parent) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  parent?.appendChild(el);
+  return el;
+}
+
+// Light model: each zone's LED sits at a hexagon corner and diffuses across the
+// whole face; the reflective inner walls carry some light to the far side. Drawn as
+// one radial gradient per LED, centered on its vertex, screen-blended and clipped to
+// the hexagon. Invisible kites on top handle picking.
+const GLOW_STOPS = [[0, 1], [0.15, 0.9], [0.5, 0.8], [1, 0.72]];
+// Tile structure (agent_docs/research.md): each LED sits under an L-shaped housing that
+// covers about a quarter of both adjacent edges, the slab diffuses, and the back leaks.
+// Main glow + two arms sum to at most 1, so tone scaling still prevents clipping.
+const GLOW_MAIN = 0.7, GLOW_ARM = 0.3, ARM_REACH = 0.22;
+const ARM_STOPS = [[0, 0.5], [0.4, 0.3], [0.75, 0.1], [1, 0]]; // peak 0.5 x GLOW_ARM keeps the sum <= 1
+const BACK_GLOW = 0.55;
+
+function render() {
+  const { zones, sideLength: R } = layout;
+  const apothem = R * Math.sqrt(3) / 2;
+  const groups = hexGroups(zones, R);
+  const ghosts = editLayout && layout.sim ? ghostCells(layout.tiles ?? []) : [];
+  const xs = [], ys = [];
+  const centers = [...groups.map((g) => [g.cx, g.cy]), ...ghosts.map(([q, r]) => cellCenter(q, r, R))];
+  if (!centers.length) centers.push([400, 400]);
+  for (const [cx, cy] of centers) for (let k = 0; k < 6; k++) {
+    xs.push(cx + R * Math.cos(k * Math.PI / 3));
+    ys.push(cy + R * Math.sin(k * Math.PI / 3));
+  }
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  // Device y points up; SVG y points down. flipY swaps if the physical mount disagrees.
+  // The mapping does not depend on the bounds, so element coordinates stay put when
+  // tiles change and only the viewBox moves (which lets it tween).
+  const T = ([x, y]) => [x, flipY ? y : -y];
+  const pts = (arr) => arr.map((p) => T(p).map((v) => v.toFixed(1)).join(",")).join(" ");
+  const pad = R * 0.4; // room for the halo
+  const target = [minX - pad, (flipY ? minY : -maxY) - pad, maxX - minX + 2 * pad, maxY - minY + 2 * pad];
+  if (flipY !== lastFlip) currentVB = null; // flipping mirrors coordinates: jump, don't tween
+  lastFlip = flipY;
+  for (const el of scene.querySelectorAll("svg.slice")) el.remove();
+  for (const el of [svg, wallSvg]) el.innerHTML = "";
+  els.clear();
+  const defs = svgEl("defs", {}, svg);
+  // Filter regions in user space: the default bbox-relative region collapses for a
+  // horizontal line (zero-height bbox) and crops its stroke.
+  const region = {
+    filterUnits: "userSpaceOnUse",
+    x: target[0] - pad, y: target[1] - pad, width: target[2] + 2 * pad, height: target[3] + 2 * pad,
+  };
+  const blur = svgEl("filter", { id: "halo", ...region }, defs);
+  svgEl("feGaussianBlur", { stdDeviation: R * 0.12 }, blur);
+  const soft = svgEl("filter", { id: "soft", ...region }, defs);
+  svgEl("feGaussianBlur", { stdDeviation: R * 0.015 }, soft);
+  const back = svgEl("filter", { id: "back", ...region }, defs);
+  svgEl("feGaussianBlur", { stdDeviation: R * 0.28 }, back);
+  // Light leaking out of the translucent back: a blurred copy of each tile behind everything.
+  // Back glow and edge spill land on the wall, which sits behind the tiles in 3D.
+  const backLayer = svgEl("g", { filter: "url(#back)", style: "mix-blend-mode:screen" }, wallSvg);
+  const haloLayer = svgEl("g", { filter: "url(#halo)", style: "mix-blend-mode:screen" }, wallSvg);
+  // Tile thickness: a few stacked silhouettes between wall and face, visible when tilted.
+  const slices = Array.from({ length: SLICES }, (_, i) => {
+    const el = document.createElementNS(SVG_NS, "svg");
+    el.setAttribute("class", "slice passive");
+    el.dataset.frac = (i + 1) / (SLICES + 1);
+    scene.insertBefore(el, svg);
+    return el;
+  });
+  const glowLayer = svgEl("g", {}, svg);
+  const rimLayer = svgEl("g", { style: "mix-blend-mode:screen", "pointer-events": "none" }, svg);
+  const housingLayer = svgEl("g", {}, svg);
+  const ghostLayer = svgEl("g", {}, svg);
+  const hitLayer = svgEl("g", {}, svg);
+  svg.classList.toggle("editing", ghosts.length > 0);
+  for (const [q, r] of ghosts) {
+    const [cx, cy] = cellCenter(q, r, R);
+    const poly = Array.from({ length: 6 }, (_, k) => [cx + R * Math.cos(k * Math.PI / 3), cy + R * Math.sin(k * Math.PI / 3)]);
+    const el = svgEl("polygon", { points: pts(poly), class: "ghost" }, ghostLayer);
+    el.dataset.cell = `${q},${r}`;
+  }
+  hexes.length = 0;
+  zoneHex.clear();
+  const tileKeys = new Set();
+
+  groups.forEach((g, gi) => {
+    const at = (r, ang) => [g.cx + r * Math.cos(ang), g.cy + r * Math.sin(ang)];
+    const angles = g.zones.map((z) => Math.atan2(z.y - g.cy, z.x - g.cx));
+    const order = g.zones.map((z, k) => [angles[k], z.panelId]).sort((a, b) => a[0] - b[0]);
+    const hex = order.map(([a]) => at(R, a));
+    const clip = svgEl("clipPath", { id: `hex${gi}` }, defs);
+    svgEl("polygon", { points: pts(hex) }, clip);
+    // Tiles that weren't there in the previous render grow in.
+    const key = `${Math.round(g.cx)},${Math.round(g.cy)}`;
+    tileKeys.add(key);
+    const isNew = prevTileKeys.size > 0 && !prevTileKeys.has(key);
+    const cell = svgEl("g", { "clip-path": `url(#hex${gi})`, style: "isolation:isolate", class: isNew ? "pop" : "" }, glowLayer);
+    svgEl("polygon", { points: pts(hex), fill: WOOD }, cell);
+    for (const sl of slices) svgEl("polygon", { points: pts(hex), fill: SIDE, class: isNew ? "fade" : "" }, sl);
+    const backEl = svgEl("polygon", { points: pts(hex), fill: "#000", opacity: BACK_GLOW, class: isNew ? "fade" : "" }, backLayer);
+
+    g.zones.forEach((z, k) => {
+      const a = angles[k];
+      const [vx, vy] = T(at(R, a));
+      // objectBoundingBox units: the same gradient fits every circle that uses it.
+      const grad = svgEl("radialGradient", { id: `glow${z.panelId}` }, defs);
+      const stops = GLOW_STOPS.map(([off, op]) =>
+        svgEl("stop", { offset: off, "stop-color": "#000", "stop-opacity": op }, grad));
+      // Arms must fade to zero at their rim or the circle edge shows.
+      const armGrad = svgEl("radialGradient", { id: `arm${z.panelId}` }, defs);
+      const armStops = ARM_STOPS.map(([off, op]) =>
+        svgEl("stop", { offset: off, "stop-color": "#000", "stop-opacity": op }, armGrad));
+      const glow = (cx, cy, r, opacity, id = "glow") => svgEl("circle", {
+        cx, cy, r, opacity, fill: `url(#${id}${z.panelId})`,
+        style: "mix-blend-mode:screen;mix-blend-mode:plus-lighter", "pointer-events": "none",
+      }, cell);
+      glow(vx, vy, 2 * R, GLOW_MAIN);
+      // The L-shaped LED housing runs along both adjacent edges near the corner.
+      for (const side of [-1, 1]) {
+        const [ex, ey] = at(R, a + side * Math.PI / 3);
+        const [ox, oy] = at(R, a);
+        const f = ARM_REACH, inset = 0.92;
+        const px = g.cx + ((ox + (ex - ox) * f) - g.cx) * inset;
+        const py = g.cy + ((oy + (ey - oy) * f) - g.cy) * inset;
+        const [ax2, ay2] = T([px, py]);
+        glow(ax2, ay2, R * 0.8, GLOW_ARM, "arm");
+      }
+      const kite = svgEl("polygon", {
+        points: pts([[g.cx, g.cy], at(apothem, a - Math.PI / 6), at(R, a), at(apothem, a + Math.PI / 6)]),
+        class: "zone",
+      }, hitLayer);
+      kite.dataset.id = z.panelId;
+      els.set(z.panelId, [...stops, ...armStops]);
+    });
+    // LED housings read as small dark notches at each corner (photo).
+    for (const v of hex) {
+      const [x, y] = T([g.cx + (v[0] - g.cx) * 0.96, g.cy + (v[1] - g.cy) * 0.96]);
+      svgEl("circle", { cx: x, cy: y, r: R * 0.05, fill: "#1a1511", opacity: 0.3, filter: "url(#soft)", "pointer-events": "none" }, housingLayer);
+    }
+
+    // Rim: each edge is lit from its two end corners; the halo is the same edge blurred onto the background.
+    const edges = hex.map((p0, i) => {
+      const p1 = hex[(i + 1) % 6];
+      const [x1, y1] = T(p0), [x2, y2] = T(p1);
+      const grad = svgEl("linearGradient", {
+        id: `edge${gi}_${i}`, gradientUnits: "userSpaceOnUse", x1, y1, x2, y2,
+      }, defs);
+      const stops = RIM_T.map((off) => svgEl("stop", { offset: off, "stop-color": "#000" }, grad));
+      // Butt caps: round caps overlap at corners and make bright dots under screen blending.
+      const line = { x1, y1, x2, y2, stroke: `url(#edge${gi}_${i})`, "stroke-linecap": "butt", class: isNew ? "fade" : "" };
+      svgEl("line", { ...line, "stroke-width": R * HALO_WIDTH, opacity: HALO_OPACITY }, haloLayer);
+      svgEl("line", { ...line, "stroke-width": R * RIM_WIDTH, filter: "url(#soft)" }, rimLayer);
+      // The side walls leak light like the rim: each thickness slice carries the same
+      // edge gradient, so the tilted side band glows where the rim glows.
+      for (const sl of slices) {
+        svgEl("line", { ...line, "stroke-width": R * SIDE_WIDTH, style: "mix-blend-mode:screen" }, sl);
+      }
+      return stops;
+    });
+    const hi = hexes.length;
+    hexes.push({ ids: order.map(([, id]) => id), edges, verts: hex, cx: g.cx, cy: g.cy, R, backEl });
+    for (const [, id] of order) zoneHex.set(id, hi);
+  });
+  // Controller: the layout's shapeType 12 entry sits just outside the middle of one
+  // tile edge (inferred: it plugs into that edge's connector). Drawn as a block along
+  // that edge, facing out from the nearest tile.
+  const ctrl = layout.controller;
+  ctrlBtn.hidden = !ctrl;
+  ctrlBtn.classList.toggle("active", showCtrl);
+  if (ctrl && showCtrl && groups.length) {
+    const g = groups.reduce((a, b) => Math.hypot(b.cx - ctrl.x, b.cy - ctrl.y) < Math.hypot(a.cx - ctrl.x, a.cy - ctrl.y) ? b : a);
+    const a = Math.atan2(ctrl.y - g.cy, ctrl.x - g.cx);
+    const u = [Math.cos(a), Math.sin(a)], v = [-u[1], u[0]]; // outward, along the edge
+    const half = R * 0.3, depth = R * 0.22;
+    const base = [g.cx + u[0] * apothem, g.cy + u[1] * apothem]; // edge midpoint
+    const corner = (s, d) => [base[0] + v[0] * s + u[0] * d, base[1] + v[1] * s + u[1] * d];
+    const ctrlLayer = svgEl("g", { "pointer-events": "none" }, svg);
+    svgEl("polygon", {
+      points: pts([corner(-half, 0), corner(half, 0), corner(half, depth), corner(-half, depth)]),
+      fill: "#3a322a", stroke: "#ffcf8a", "stroke-width": 1.2, "stroke-linejoin": "round",
+    }, ctrlLayer);
+  }
+  flipBtn.classList.toggle("active", flipY);
+  prevTileKeys = tileKeys;
+  if (layout.sim) {
+    const n = layout.tiles?.length ?? 0;
+    document.getElementById("panelCount").textContent = `${n} panel${n === 1 ? "" : "s"}`;
+  }
+  tweenViewBox(target);
+}
+
+// View rescale: interpolate the viewBox of every layer from where it is now to the
+// new bounds, so adding/removing tiles or toggling Layout zooms smoothly.
+const TWEEN_MS = 350;
+let currentVB = null, lastFlip = null, tweenRaf = 0, prevTileKeys = new Set();
+function setViewBox(vb) {
+  currentVB = vb;
+  const str = vb.map((v) => v.toFixed(2)).join(" ");
+  for (const el of scene.querySelectorAll("svg")) el.setAttribute("viewBox", str);
+  [, , vbW, vbH] = vb;
+  applyView();
+}
+function tweenViewBox(target) {
+  cancelAnimationFrame(tweenRaf);
+  const from = currentVB;
+  if (!from || from.every((v, i) => Math.abs(v - target[i]) < 0.01)) return setViewBox(target);
+  const t0 = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / TWEEN_MS);
+    const e = 1 - (1 - t) ** 3; // ease-out cubic
+    setViewBox(from.map((v, i) => v + (target[i] - v) * e));
+    if (t < 1) tweenRaf = requestAnimationFrame(step);
+  };
+  tweenRaf = requestAnimationFrame(step);
+}
+
+// 3D view. Real geometry: tile face 10 mm off the wall, body 6 mm thick, 1 layout
+// unit = 1.72 mm (agent_docs/research.md). Depth is exaggerated a little so it reads.
+const MM_PER_UNIT = 1.72, FACE_MM = 10, BODY_MM = 6, DEPTH_BOOST = 2;
+const SLICES = 18;          // enough that the side band stays continuous at steep angles
+const SIDE_WIDTH = 0.035;   // side-wall glow line width per slice, sideLengths
+const SIDE = "#3a2f25";
+let vbW = 1, vbH = 1;
+let view = load("view", { yaw: 0, pitch: 0 });
+
+function applyView() {
+  // Rendered px per layout unit (preserveAspectRatio "meet"). Measured untransformed.
+  const w = scene.offsetWidth, h = scene.offsetHeight;
+  const pxPerUnit = Math.min(w / vbW, h / vbH) || 1;
+  const z = (mm) => (mm / MM_PER_UNIT) * pxPerUnit * DEPTH_BOOST;
+  const face = z(FACE_MM), gap = z(FACE_MM - BODY_MM);
+  wallSvg.style.transform = "translateZ(0px)";
+  for (const sl of scene.querySelectorAll("svg.slice")) {
+    sl.style.transform = `translateZ(${gap + (face - gap) * Number(sl.dataset.frac)}px)`;
+  }
+  svg.style.transform = `translateZ(${face}px)`;
+  scene.style.transform = `translateZ(${-face / 2}px) rotateX(${view.pitch}deg) rotateY(${view.yaw}deg)`;
+}
+addEventListener("resize", applyView);
+document.getElementById("resetView").onclick = () => {
+  view = { yaw: 0, pitch: 0 };
+  save("view", view);
+  applyView();
+};
+
+const hexes = [];
+const zoneHex = new Map();
+let masterLevel = 1;
+
+// Requested RGB shown as-is (saturated); the hue is the color normalized to its
+// strongest channel and intensity comes from that channel.
+function panelColor(c) {
+  const peak = Math.max(...c);
+  return peak ? [c.map((v) => (v * 255) / peak), peak / 255] : [[0, 0, 0], 0];
+}
+const scale = (c, k) => c.map((v) => Math.min(255, Math.round(v * k)));
+
+// Perceived brightness saturates fast: one lit corner already lights most of the tile
+// (photo: tiles with 1, 2, 4 and 6 lit corners look nearly equally bright).
+const tone = (x) => 1 - Math.exp(-2.2 * x);
+
+// Rim model, per point on an edge, summed over the hexagon's 6 LEDs:
+//   near field: bright close to the LED's own corner, smooth gaussian falloff
+//   direct:     walls facing the LED catch its light, scaled by cos(incidence) and distance
+//   ambient:    light bounced everywhere inside the tile
+// Weights act on intensity only; the color is the intensity-weighted tint, so hue never
+// shifts. Corners are shared samples, so there are no jumps at vertices.
+const RIM_T = Array.from({ length: 17 }, (_, i) => i / 16); // fine enough to resolve the midpoint dip
+const RIM_NEAR = 0.6, RIM_NEAR_SIGMA = 0.45;  // in sideLengths
+const RIM_DIRECT = 0.7, RIM_DIRECT_DIST = 1.4;
+const RIM_AMBIENT = 0.35;
+const RIM_WIDTH = 0.03, RIM_GAIN = 0.65;      // rim line width (sideLengths) and brightness
+const HALO_WIDTH = 0.09, HALO_OPACITY = 0.45;  // edge spill onto the background
+const RIM_L_LEN = 0.25;                      // L housing length along each edge, sideLengths
+const RIM_MID_DIP = 0.3, RIM_MID_WIDTH = 0.08; // connector window at each edge midpoint
+
+function rimLight(h, p, n, lights) {
+  let sum = 0;
+  const tint = [0, 0, 0];
+  h.verts.forEach(([vx, vy], j) => {
+    const [c, I] = lights[j];
+    if (!I) return;
+    const dx = vx - p[0], dy = vy - p[1];
+    const d = Math.hypot(dx, dy) / h.R;
+    const cos = d > 1e-6 ? Math.max(0, (dx * n[0] + dy * n[1]) / (d * h.R)) : 0;
+    const dl = Math.max(0, d - RIM_L_LEN); // flat along the L housing, then falls off
+    const w = I * (RIM_NEAR * Math.exp(-((dl / RIM_NEAR_SIGMA) ** 2))
+      + RIM_DIRECT * cos / (1 + (d / RIM_DIRECT_DIST) ** 2)
+      + RIM_AMBIENT);
+    sum += w;
+    for (let ch = 0; ch < 3; ch++) tint[ch] += c[ch] * w;
+  });
+  return sum ? scale(tint, tone(sum) / sum) : [0, 0, 0];
+}
+
+function paintZone(id) {
+  const h = hexes[zoneHex.get(id)];
+  if (!h) return;
+  const lights = h.ids.map((zid) => panelColor(shownColor(zid)));
+  // Device master brightness scales the final output, after tone(): applied before it,
+  // the saturation curve would swallow most of the change.
+  const M = masterLevel;
+  // Face: scale every LED's glow so the tile's total follows tone(), additive-ish, hue kept.
+  const total = lights.reduce((s, [, I]) => s + I, 0);
+  // Glows add (plus-lighter); scaling by tone/total keeps every point <= tone(), so no
+  // channel clips and the hue holds.
+  const k = total ? (tone(total) / total) * M : 0;
+  h.ids.forEach((zid, j) => {
+    const [c, I] = lights[j];
+    const col = rgbCss(scale(c, I * k));
+    for (const st of els.get(zid)) st.setAttribute("stop-color", col);
+  });
+  const mean = [0, 1, 2].map((ch) => lights.reduce((s2, [c, I]) => s2 + c[ch] * I, 0));
+  h.backEl.setAttribute("fill", rgbCss(total ? scale(mean, (tone(total) / total) * M) : [0, 0, 0]));
+  h.edges.forEach((stops, i) => {
+    const [ax, ay] = h.verts[i], [bx, by] = h.verts[(i + 1) % 6];
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+    const nl = Math.hypot(h.cx - mx, h.cy - my);
+    const n = [(h.cx - mx) / nl, (h.cy - my) / nl]; // inward wall normal
+    RIM_T.forEach((t, kk) => {
+      const p = [ax + (bx - ax) * t, ay + (by - ay) * t];
+      const dip = 1 - RIM_MID_DIP * Math.exp(-(((t - 0.5) / RIM_MID_WIDTH) ** 2));
+      stops[kk].setAttribute("stop-color", rgbCss(scale(rimLight(h, p, n, lights), dip * RIM_GAIN * M)));
+    });
+  });
+}
+
+// Batch paint changes and post at most every 30 ms.
+let pending = {};
+let timer = null;
+// Undo history: each stroke (pointer down..up, or one fill/clear/scene load) is one
+// entry holding the colors before and after for every zone it touched.
+const undoStack = [], redoStack = [];
+let stroke = null, strokeDepth = 0;
+const undoBtn = document.getElementById("undo"), redoBtn = document.getElementById("redo");
+function showHistory() {
+  undoBtn.disabled = !undoStack.length;
+  redoBtn.disabled = !redoStack.length;
+}
+function beginStroke() {
+  if (strokeDepth++ === 0) stroke = { before: new Map(), after: new Map() };
+}
+function endStroke() {
+  if (--strokeDepth > 0) return;
+  if (stroke && stroke.after.size) {
+    undoStack.push(stroke);
+    if (undoStack.length > 200) undoStack.shift();
+    redoStack.length = 0;
+  }
+  stroke = null;
+  showHistory();
+}
+function applySet(set) {
+  beginStroke();
+  for (const [id, c] of set) queue(id, c);
+  endStroke();
+}
+function undo() {
+  const s = undoStack.pop();
+  if (!s) return;
+  for (const [id, c] of s.before) queue(id, c, false);
+  redoStack.push(s);
+  showHistory();
+}
+function redo() {
+  const s = redoStack.pop();
+  if (!s) return;
+  for (const [id, c] of s.after) queue(id, c, false);
+  undoStack.push(s);
+  showHistory();
+}
+undoBtn.onclick = undo;
+redoBtn.onclick = redo;
+
+// Brush footprint: one corner, or every corner of the touched tile.
+let tileBrush = load("tileBrush", false);
+const brushBtn = document.getElementById("brushMode");
+function showBrush() {
+  brushBtn.textContent = tileBrush ? "Brush: tile" : "Brush: corner";
+  brushBtn.classList.toggle("active", tileBrush);
+}
+brushBtn.onclick = () => { tileBrush = !tileBrush; save("tileBrush", tileBrush); showBrush(); };
+showBrush();
+const targets = (id) => (tileBrush && hexes[zoneHex.get(id)]) ? hexes[zoneHex.get(id)].ids : [id];
+const paint = (id) => { for (const t of targets(id)) queue(t, currentColor()); };
+const rampAt = (id) => { for (const t of targets(id)) ramp(t); };
+
+function queue(id, c, record = true) {
+  if (record && stroke) {
+    if (!stroke.before.has(id)) stroke.before.set(id, state.get(id) ?? [0, 0, 0]);
+    stroke.after.set(id, c);
+  }
+  pending[id] = c;
+  state.set(id, c);
+  paintZone(id, c);
+  if (!timer) timer = setTimeout(flush, 30);
+}
+async function flush() {
+  timer = null;
+  const body = pending;
+  pending = {};
+  let ok = false;
+  try { ok = (await fetch("/api/paint", { method: "POST", body: JSON.stringify(body) })).ok; } catch {}
+  // A lost send leaves the page showing colors the server never got: resync.
+  if (!ok) { statusEl.textContent = "send failed, resyncing"; resync(); }
+}
+
+function zoneAt(x, y) {
+  const el = document.elementFromPoint(x, y);
+  return el && el.dataset && el.dataset.id ? Number(el.dataset.id) : null;
+}
+
+// Long press ramps the held zone's intensity, keeping its hue. Tap or drag paints.
+const LONG_PRESS_MS = 350;
+const RAMP_MS = 40;
+const RAMP_STEP = 0.03;
+let brighten = load("brighten", true);
+const dirBtn = document.getElementById("dir");
+function showDir() { dirBtn.textContent = brighten ? "Hold: brighter" : "Hold: dimmer"; }
+dirBtn.onclick = () => { brighten = !brighten; save("brighten", brighten); showDir(); };
+showDir();
+
+function ramp(id) {
+  const c = state.get(id) ?? [0, 0, 0];
+  const peak = Math.max(...c);
+  // An unlit zone has no hue of its own; brighten it with the brush hue.
+  const hue = peak ? c.map((v) => v / peak) : brush.map((v) => v / Math.max(...brush));
+  const level = Math.max(0, Math.min(1, peak / 255 + (brighten ? RAMP_STEP : -RAMP_STEP)));
+  queue(id, hue.map((v) => Math.round(v * level * 255)));
+}
+
+// Per pointer: { start, zone, mode: "pending" | "paint" | "ramp", timer, rampTimer }
+const pointers = new Map();
+function endPointer(e, tap) {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  clearTimeout(p.timer);
+  clearInterval(p.rampTimer);
+  if (tap && p.mode === "pending" && p.start !== null) paint(p.start);
+  pointers.delete(e.pointerId);
+  endStroke();
+}
+
+// Drag on empty space, right-drag, or shift-drag rotates (yaw) and tilts (pitch).
+let rotating = null;
+stage.addEventListener("pointerdown", (e) => {
+  stage.setPointerCapture(e.pointerId);
+  const zone = zoneAt(e.clientX, e.clientY);
+  if (editLayout && e.button === 0 && !e.shiftKey) {
+    const cell = document.elementFromPoint(e.clientX, e.clientY)?.dataset?.cell;
+    if (cell) {
+      setTiles(addCells(layout.tiles, images(cell.split(",").map(Number))));
+      return;
+    }
+    const tile = zone !== null && tileOfZone(zone);
+    if (tile) {
+      setTiles(removeCells(layout.tiles, images(tile.split(",").map(Number))));
+      return;
+    }
+  }
+  if (zone === null || e.button === 2 || e.shiftKey) {
+    rotating = { id: e.pointerId, x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch };
+    stage.classList.add("rotating");
+    return;
+  }
+  if (picking || e.altKey) {
+    pickFrom(zone);
+    return;
+  }
+  beginStroke();
+  const p = { start: zone, zone, mode: "pending", timer: null, rampTimer: null };
+  if (erasing) {
+    p.mode = "paint";
+    if (zone !== null) paint(zone);
+  } else {
+    p.timer = setTimeout(() => {
+      if (p.mode !== "pending" || p.zone === null) return;
+      p.mode = "ramp";
+      navigator.vibrate?.(10);
+      rampAt(p.zone);
+      p.rampTimer = setInterval(() => p.zone !== null && rampAt(p.zone), RAMP_MS);
+    }, LONG_PRESS_MS);
+  }
+  pointers.set(e.pointerId, p);
+});
+// Hover indicator: outline the zones the brush would paint (mouse/pen only; touch has no hover).
+let hovered = [];
+function setHover(ids) {
+  for (const id of hovered) svg.querySelector(`.zone[data-id="${id}"]`)?.classList.remove("hover");
+  hovered = ids;
+  for (const id of hovered) svg.querySelector(`.zone[data-id="${id}"]`)?.classList.add("hover");
+}
+stage.addEventListener("pointermove", (e) => {
+  if (e.pointerType !== "touch" && !rotating) {
+    const z = zoneAt(e.clientX, e.clientY);
+    const tileIds = z !== null && hexes[zoneHex.get(z)]?.ids;
+    setHover(z === null ? [] : editLayout && tileIds ? tileIds : targets(z));
+  }
+});
+stage.addEventListener("pointerleave", () => setHover([]));
+stage.addEventListener("pointermove", (e) => {
+  if (rotating && e.pointerId === rotating.id) {
+    const clamp = (v) => Math.max(-80, Math.min(80, v));
+    view = {
+      yaw: clamp(rotating.yaw + (e.clientX - rotating.x) * 0.4),
+      pitch: clamp(rotating.pitch - (e.clientY - rotating.y) * 0.4),
+    };
+    applyView();
+    return;
+  }
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  for (const ev of e.getCoalescedEvents ? e.getCoalescedEvents() : [e]) {
+    const zone = zoneAt(ev.clientX, ev.clientY);
+    if (zone === p.zone) continue;
+    p.zone = zone;
+    if (p.mode === "pending") {
+      // Moved off the start zone before the long press fired: this is a paint stroke.
+      clearTimeout(p.timer);
+      p.mode = "paint";
+      if (p.start !== null) paint(p.start);
+    }
+    if (p.mode === "paint" && zone !== null) paint(zone);
+  }
+});
+function endRotate(e) {
+  if (!rotating || e.pointerId !== rotating.id) return false;
+  rotating = null;
+  stage.classList.remove("rotating");
+  save("view", view);
+  return true;
+}
+stage.addEventListener("pointerup", (e) => endRotate(e) || endPointer(e, true));
+stage.addEventListener("pointercancel", (e) => endRotate(e) || endPointer(e, false));
+stage.addEventListener("contextmenu", (e) => e.preventDefault());
+stage.addEventListener("dblclick", (e) => {
+  if (zoneAt(e.clientX, e.clientY) !== null) return;
+  view = { yaw: 0, pitch: 0 };
+  save("view", view);
+  applyView();
+});
+
+function buildSwatches() {
+  const box = document.getElementById("swatches");
+  PALETTE.forEach((c) => {
+    const b = document.createElement("button");
+    b.className = "swatch";
+    b.style.background = rgbCss(c);
+    b.setAttribute("aria-label", `color ${rgbCss(c)}`);
+    b.onclick = () => {
+      brush = c;
+      erasing = false;
+      eraseBtn.classList.remove("active");
+      box.querySelectorAll(".swatch").forEach((s) => s.classList.toggle("active", s === b));
+      brushChanged();
+    };
+    if (c === brush) b.classList.add("active");
+    box.appendChild(b);
+  });
+}
+
+eraseBtn.onclick = () => {
+  erasing = !erasing;
+  eraseBtn.classList.toggle("active", erasing);
+  brushChanged();
+};
+const fillAll = (c) => applySet([...els.keys()].map((id) => [id, c]));
+document.getElementById("fill").onclick = () => fillAll(currentColor());
+document.getElementById("clear").onclick = () => fillAll([0, 0, 0]);
+
+// Pick: copy a zone's color into the brush (hue as the brush, level as brightness).
+let picking = false;
+const pickBtn = document.getElementById("pick");
+function setPicking(on) { picking = on; pickBtn.classList.toggle("active", on); }
+pickBtn.onclick = () => setPicking(!picking);
+function pickFrom(id) {
+  setPicking(false);
+  const c = state.get(id) ?? [0, 0, 0];
+  const peak = Math.max(...c);
+  if (!peak) { statusEl.textContent = "picked an unlit zone; brush unchanged"; return; }
+  brush = c.map((v) => Math.round((v * 255) / peak));
+  bri.value = Math.max(5, Math.round((peak / 255) * 100));
+  erasing = false;
+  eraseBtn.classList.remove("active");
+  document.querySelectorAll(".swatch").forEach((s) =>
+    s.classList.toggle("active", s.style.background === rgbCss(brush)));
+  statusEl.textContent = `picked ${rgbCss(c)}`;
+  brushChanged();
+}
+
+// Scenes are stored on the server so every device shares them; loading is undoable.
+const scenesSel = document.getElementById("scenes");
+async function refreshScenes(select) {
+  const names = Object.keys(await (await fetch("/api/scenes")).json()).sort();
+  scenesSel.innerHTML = '<option value="">Scenes</option>' +
+    names.map((n) => `<option>${n.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`)}</option>`).join("");
+  scenesSel.value = select ?? "";
+}
+scenesSel.onchange = async () => {
+  const name = scenesSel.value;
+  if (!name) return;
+  const scenes = await (await fetch("/api/scenes")).json();
+  const scene = scenes[name] ?? {};
+  applySet([...els.keys()].map((id) => [id, scene[id] ?? [0, 0, 0]]));
+  statusEl.textContent = `loaded "${name}"`;
+};
+document.getElementById("sceneSave").onclick = async () => {
+  const name = prompt("Scene name", scenesSel.value || "")?.trim();
+  if (!name) return;
+  const colors = Object.fromEntries([...els.keys()].map((id) => [id, state.get(id) ?? [0, 0, 0]]));
+  await fetch(`/api/scenes/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(colors) });
+  await refreshScenes(name);
+  statusEl.textContent = `saved "${name}"`;
+};
+document.getElementById("sceneDelete").onclick = async () => {
+  const name = scenesSel.value;
+  if (!name || !confirm(`Delete scene "${name}"?`)) return;
+  await fetch(`/api/scenes/${encodeURIComponent(name)}`, { method: "DELETE" });
+  await refreshScenes();
+};
+
+// Panel brightness: the device's own master level, applied on top of the picture.
+const master = document.getElementById("master");
+let masterTimer = null, masterTouched = 0;
+const repaintAll = () => { for (const id of els.keys()) paintZone(id); };
+function setMaster(value) {
+  master.value = value;
+  masterLevel = value / 100;
+  repaintAll();
+}
+master.oninput = () => {
+  masterTouched = Date.now();
+  setMaster(Number(master.value));
+  clearTimeout(masterTimer);
+  masterTimer = setTimeout(() =>
+    fetch("/api/brightness", { method: "POST", body: JSON.stringify({ value: Number(master.value) }) }), 120);
+};
+
+// Keyboard shortcuts (ignored while typing in a field).
+addEventListener("keydown", (e) => {
+  if (e.target instanceof Element && e.target.closest("input, select, textarea")) return;
+  const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+  if (mod && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+  else if (mod && k === "y") { e.preventDefault(); redo(); }
+  else if (mod) return;
+  else if (k === "escape" && openTab) { showTab(null); save("tab", null); }
+  else if (k === "e") eraseBtn.click();
+  else if (k === "t") brushBtn.click();
+  else if (k === "i") pickBtn.click();
+  else if (k === "f") fillAll(currentColor());
+  else if (k === "delete" && e.shiftKey) fillAll([0, 0, 0]);
+  else if (k === "[" || k === "]") { bri.value = Number(bri.value) + (k === "]" ? 10 : -10); brushChanged(); }
+  else if (k >= "1" && k <= String(PALETTE.length)) document.querySelectorAll(".swatch")[Number(k) - 1]?.click();
+});
+document.getElementById("takeover").onclick = async () => {
+  const r = await fetch("/api/takeover", { method: "POST" });
+  statusEl.textContent = r.ok ? "streaming" : "reconnect failed";
+};
+ctrlBtn.onclick = () => {
+  showCtrl = !showCtrl;
+  save("showCtrl", showCtrl);
+  render();
+  for (const id of els.keys()) paintZone(id);
+};
+flipBtn.onclick = () => {
+  flipY = !flipY;
+  save("flipY", flipY);
+  render();
+  for (const id of els.keys()) paintZone(id, state.get(id) ?? [0, 0, 0]);
+};
+
+const state = new Map();
+let es = null;
+// Touch glow and ripples from the server (zone id -> level 0..1), drawn over the picture the same
+// way server.mjs shown() does: each channel raised toward GLOW by the level.
+const GLOW = [255, 205, 140];
+let glowLevels = {};
+// While a server effect runs, its frames replace the painting in the preview, as on
+// the panels; the painting itself (state) is untouched.
+let effectFrame = null;
+function shownColor(id) {
+  const c = effectFrame ? effectFrame[id] ?? [0, 0, 0] : state.get(id) ?? [0, 0, 0], g = glowLevels[id];
+  return g ? c.map((v, k) => Math.max(v, Math.round(GLOW[k] * g))) : c;
+}
+// Effects sheet: one button per server effect plus None; the Effects tab carries a
+// dot while one runs, so it shows with the sheet folded too.
+const effectsBox = document.getElementById("effects"), effectHint = document.getElementById("effectHint");
+let effectList = [], activeEffect = null;
+function showEffects() {
+  for (const b of effectsBox.children) b.classList.toggle("active", (b.dataset.key || null) === activeEffect);
+  const e = effectList.find((e) => e.key === activeEffect);
+  effectHint.textContent = e
+    ? `${e.description}. The painting is kept underneath; None brings it back.`
+    : "Animations run on the server and replace the painting on the panels while they play.";
+  tabButton("effects").classList.toggle("on", !!activeEffect);
+}
+async function loadEffects() {
+  const { effects, active } = await (await fetch("/api/effects")).json();
+  effectList = effects;
+  activeEffect = active;
+  effectsBox.textContent = "";
+  for (const e of [{ key: "", name: "None", description: "Show the painting" }, ...effects]) {
+    const b = document.createElement("button");
+    b.className = "tool";
+    b.dataset.key = e.key;
+    b.textContent = e.name;
+    b.title = e.description;
+    b.onclick = () => fetch("/api/effect", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: e.key || null }),
+    });
+    effectsBox.appendChild(b);
+  }
+  showEffects();
+}
+function repaintHexes(ids) {
+  const seen = new Set();
+  for (const id of ids) {
+    const h = zoneHex.get(Number(id));
+    if (h === undefined || seen.has(h)) continue;
+    seen.add(h);
+    paintZone(Number(id));
+  }
+}
+// Touch sheet: the mode as a segmented control, plus mapping. The Touch tab only
+// exists with a real device (the simulator has no touch stream).
+const touchModeBtns = [...document.querySelectorAll("#touchModes button")];
+const touchMapBtn = document.getElementById("touchMap"), touchInfo = document.getElementById("touchInfo");
+let touch = { mode: "ripple", available: false, mapping: null };
+function showTouch() {
+  tabButton("touch").hidden = !touch.available;
+  if (touch.available && pendingTab === "touch") showTab("touch");
+  for (const b of touchModeBtns) b.classList.toggle("active", b.dataset.mode === touch.mode);
+  touchMapBtn.classList.toggle("active", !!touch.mapping);
+  touchMapBtn.textContent = touch.mapping ? "Stop mapping" : "Map touch";
+  touchInfo.textContent = touch.tiles ? `${touch.mapped} of ${touch.tiles} tiles mapped` : "";
+}
+const postTouch = (body) => fetch("/api/touch", {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+});
+for (const b of touchModeBtns) b.onclick = () => postTouch({ mode: b.dataset.mode });
+touchMapBtn.onclick = () => postTouch({ map: !touch.mapping });
+// Called on every brush change: updates the color dot on the Paint tab and, in touch
+// paint mode, sends the brush to the server (it paints touched tiles with it).
+const brushDot = document.getElementById("brushDot");
+let sentBrush = "";
+function brushChanged() {
+  brushDot.style.background = rgbCss(currentColor());
+  brushDot.classList.toggle("erase", erasing);
+  if (touch.mode !== "paint") return void (sentBrush = "");
+  const c = JSON.stringify(currentColor());
+  if (c === sentBrush) return;
+  sentBrush = c;
+  postTouch({ brush: currentColor() }).catch(() => (sentBrush = ""));
+}
+bri.addEventListener("input", brushChanged);
+
+// Dock and sheets: one group of controls at a time. Tapping the open tab (or Escape)
+// folds it, leaving the panel view the whole screen. `tabHooks[name](open)` runs when
+// that sheet opens or closes (the simulator's Layout tab toggles editing with it).
+const tabButtons = [...document.querySelectorAll("#dock .tab")];
+const sheets = [...document.querySelectorAll("footer .sheet")];
+const tabButton = (name) => tabButtons.find((t) => t.dataset.tab === name);
+const tabHooks = {};
+let openTab = null;
+// Restored tab whose button may only appear later (Touch waits for the server).
+let pendingTab = load("tab", "paint");
+function showTab(name) {
+  if (name && tabButton(name)?.hidden) name = null;
+  const prev = openTab;
+  openTab = name;
+  if (pendingTab === name) pendingTab = null;
+  for (const s of sheets) s.hidden = s.dataset.sheet !== name;
+  for (const t of tabButtons) {
+    t.classList.toggle("active", t.dataset.tab === name);
+    t.setAttribute("aria-expanded", String(t.dataset.tab === name));
+  }
+  if (prev !== name) {
+    tabHooks[prev]?.(false);
+    tabHooks[name]?.(true);
+  }
+}
+for (const t of tabButtons) {
+  t.onclick = () => {
+    pendingTab = null;
+    showTab(openTab === t.dataset.tab ? null : t.dataset.tab);
+    save("tab", openTab);
+  };
+}
+function resync() {
+  es?.close();
+  connect();
+}
+// Device status from the server: are the panels actually showing this painting?
+const resumeBtn = document.getElementById("resume");
+let deviceStatus = { streaming: true };
+function showStatus() {
+  const s = deviceStatus;
+  resumeBtn.hidden = s.streaming;
+  statusEl.classList.toggle("warn", !s.streaming);
+  if (!s.streaming) {
+    statusEl.textContent = !s.on ? "panels are off" : `panels show "${s.effect}", not this painting`;
+  }
+}
+resumeBtn.onclick = async () => {
+  const r = await fetch("/api/takeover", { method: "POST" });
+  if (!r.ok) statusEl.textContent = "resume failed";
+};
+// Panels added, removed or moved: reload the layout and redraw with current colors.
+async function reloadLayout() {
+  const next = await (await fetch("/api/layout")).json();
+  if (JSON.stringify(next) === JSON.stringify(layout)) return;
+  layout = next;
+  render();
+  for (const id of els.keys()) paintZone(id);
+  statusEl.textContent = `layout updated: ${layout.zones.length} zones`;
+}
+function connect() {
+  es = new EventSource("/api/events");
+  es.onopen = () => {
+    statusEl.textContent = "live";
+    showStatus();
+    // A layout event sent while this page was disconnected is lost; check on every connect.
+    reloadLayout().catch(() => {});
+  };
+  es.addEventListener("status", (m) => {
+    const was = deviceStatus.streaming;
+    deviceStatus = JSON.parse(m.data);
+    // Brightness changed elsewhere (another device, the Nanoleaf app); don't fight a drag.
+    if (typeof deviceStatus.brightness === "number" && Date.now() - masterTouched > 2000 &&
+        deviceStatus.brightness !== Number(master.value)) setMaster(deviceStatus.brightness);
+    if (deviceStatus.streaming && !was) statusEl.textContent = "live";
+    showStatus();
+  });
+  es.addEventListener("touch", (m) => {
+    const was = touch.mapping;
+    touch = JSON.parse(m.data);
+    showTouch();
+    brushChanged();
+    if (touch.mapping) {
+      statusEl.textContent = (touch.mapping.auto ? "new tile: " : "") +
+        `touch the lit tile (${touch.mapping.index + 1}/${touch.mapping.total})`;
+    }
+    else if (was) statusEl.textContent = `touch mapped: ${touch.mapped}/${touch.tiles} tiles`;
+  });
+  es.addEventListener("effect", (m) => {
+    const { active } = JSON.parse(m.data);
+    if (active !== activeEffect) {
+      const name = effectList.find((e) => e.key === active)?.name ?? active;
+      statusEl.textContent = active ? `effect: ${name} (painting hidden)` : "live";
+    }
+    activeEffect = active;
+    showEffects();
+    if (!active && effectFrame) {
+      effectFrame = null;
+      repaintHexes(els.keys());
+    }
+  });
+  es.addEventListener("effectFrame", (m) => {
+    effectFrame = JSON.parse(m.data);
+    repaintHexes(els.keys());
+  });
+  es.addEventListener("glow", (m) => {
+    const prev = glowLevels;
+    glowLevels = JSON.parse(m.data);
+    repaintHexes([...Object.keys(prev), ...Object.keys(glowLevels)]);
+  });
+  es.onerror = () => (statusEl.textContent = "reconnecting");
+  es.addEventListener("layout", reloadLayout);
+  es.onmessage = (m) => {
+    for (const [id, c] of Object.entries(JSON.parse(m.data))) {
+      state.set(Number(id), c);
+      paintZone(Number(id), c);
+    }
+  };
+}
+
+(async () => {
+  layout = await (await fetch("/api/layout")).json();
+  if (layout.sim) {
+    tabButton("layout").hidden = false;
+    document.querySelector("header h1").textContent = "hexlore (simulator)";
+    const symBtn = document.getElementById("symmetry");
+    const showSym = () => {
+      symBtn.textContent = `Symmetry: ${symmetry}`;
+      symBtn.classList.toggle("active", symmetry !== "off");
+    };
+    showSym();
+    symBtn.onclick = () => {
+      symmetry = SYMMETRIES[(SYMMETRIES.indexOf(symmetry) + 1) % SYMMETRIES.length];
+      symCenter = centerCell(layout.tiles);
+      save("symmetry", symmetry);
+      showSym();
+    };
+    document.getElementById("grow").onclick = () => setTiles(growShape(layout.tiles));
+    document.getElementById("shrink").onclick = () => setTiles(shrinkShape(layout.tiles));
+    document.getElementById("fillHoles").onclick = () => setTiles(fillHoles(layout.tiles));
+    document.getElementById("symmetrize").onclick = () => {
+      symCenter ??= centerCell(layout.tiles);
+      setTiles(symmetrize(layout.tiles));
+    };
+    // The Layout sheet being open is the editing mode: ghost slots show, taps add/remove.
+    tabHooks.layout = (open) => {
+      editLayout = open;
+      if (open) symCenter = centerCell(layout.tiles);
+      render();
+      for (const id of els.keys()) paintZone(id);
+    };
+  }
+  showTab(pendingTab);
+  buildSwatches();
+  brushChanged();
+  refreshScenes().catch(() => {});
+  loadEffects().catch(() => {});
+  fetch("/api/brightness").then((r) => r.json()).then((d) => setMaster(d.value)).catch(() => {});
+  render();
+  connect();
+})();
+</script>
+</body>
+</html>
