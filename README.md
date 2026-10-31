@@ -4,6 +4,10 @@ Paint and animate a Nanoleaf Elements hexagon wall from a browser, and make the
 tiles react when you touch them. Everything runs on your own network: no cloud
 account, no Nanoleaf app after pairing, and nothing to install besides Node.
 
+<p align="center">
+  <img src="media/paint-3d.png" width="480" alt="The paint page: a 20-tile hexagon wall in a tilted 3D preview, half painted amber, with the Paint sheet's color swatches and brush tools below">
+</p>
+
 hexlore is also a record of how the panels work. Much of it is not in Nanoleaf's
 documentation and was found by experiment, such as how a tile's touch sensor is
 identified. The notes are in `agent_docs/` and on a reference page served by the
@@ -90,6 +94,7 @@ tiles and their ids.
 | `src/`        | the server, pairing and effect command-line tools, `effects/`     |
 | `docs/`       | the browser app and the `/tiles` reference page                   |
 | `data/`       | your painting, saved scenes and touch map; not version controlled |
+| `media/`      | images for this README                                            |
 | `agent_docs/` | protocol, hardware and troubleshooting notes                      |
 
 No dependencies beyond Node's built-in modules.

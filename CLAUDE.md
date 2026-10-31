@@ -19,6 +19,7 @@ no third-party libraries: plain Node with built-in modules only (no npm deps).
 | `docs/index.html`     | paint page (SVG, 3D preview, dock with control sheets)                               |
 | `docs/tiles.html`     | reference page at `/tiles`: tile hardware, protocols, touch id model, live map       |
 | `data/`               | runtime data written by the server; untracked                                        |
+| `media/`              | images for README.md (`paint-3d.png`: paint page screenshot)                         |
 | `data/state.json`     | current picture, restored on server start                                            |
 | `data/scenes.json`    | saved paint scenes `{name: {panelId: [r,g,b]}}`                                      |
 | `data/touch-map.json` | touch id to tile corner zones, from prediction or "Map touch"                        |
