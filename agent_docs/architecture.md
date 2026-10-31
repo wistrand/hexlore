@@ -1,8 +1,25 @@
 # Architecture: device API and streaming
 
-How this repo talks to the panels. Code lives in `src/server.mjs` (`api()`,
-`frame()`, the touch and effect engines) and `src/effect.mjs` (standalone effect
-runner); tile grouping for effects is `effectContext()` in `src/effects/lib.mjs`.
+How this repo talks to the panels. All device access is in `src/nanoleaf.mjs`, a
+self-contained library (Node built-ins, no app state):
+
+| Export                                         | Does                                                           |
+|------------------------------------------------|----------------------------------------------------------------|
+| `discover()`                                   | SSDP search on every IPv4 interface: `[{ip, name, id, model}]` |
+| `pair(host)`, `checkToken()`                   | poll `POST /api/v1/new` in the button window; test a token     |
+| `new Nanoleaf({host, token})`                  | client; also `Nanoleaf.fromFile()`; `request()` for raw REST   |
+| `isOn`, `setOn`, `brightness`, `setBrightness` | state                                                          |
+| `effect`, `effects`, `selectEffect`, `info`    | effects and device info                                        |
+| `command(name)`                                | device command through the effects write channel               |
+| `layout()`                                     | `{sideLength, zones, controller, tiles}`                       |
+| `touchIds()`                                   | every tile's touch id (getHeatmap)                             |
+| `startStream()`, `send(colors)`                | extControl v2 on; UDP frames                                   |
+| `events(cb)`, `touch(cb)`                      | SSE events, raw touch stream; reconnect; return stop()         |
+| `groupTiles`, `predictTouchIds`                | pure helpers, also `encodeFrame`, `decodeTouch`, `layoutFrom`  |
+
+Users: `src/server.mjs` (the app; its simulator is a stand-in object with the same
+methods), `src/effect.mjs`, `src/pair.mjs`, and `effectContext()` in
+`src/effects/lib.mjs` (tile grouping).
 
 ## Contents
 - Discovery
@@ -259,13 +276,14 @@ sends its brush (`{"brush":[r,g,b]}`, black when erasing) on entering paint mode
 and on each change; with several pages open the last sender wins. Touch paint is
 not in any page's undo history.
 
-Simulator (`node src/server.mjs [port] --sim`): `simApi()` stands in for the device
-behind `api()`, so the rest of the server is unchanged. UDP and the device event
-stream are skipped. Tiles are axial hex cells `[q, r]` (flat-top, neighbors at
-30 + 60k degrees, spacing sqrt(3) x side) persisted in `data/sim-layout.json`.
-Geometry matches the real unit (sideLength 67, zones at 50/67 of the side,
-`o` = center-to-zone direction). Zone ids come from `simId(q, r, corner)`, so colors
-stay with their tile. `POST /api/sim/tiles` replaces the tile set and fires the
+Simulator (`node src/server.mjs [port] --sim`): `SimDevice` in `src/sim.mjs` has the
+same methods as the library's `Nanoleaf` class that the server uses, so the server
+has one code path. Nothing is sent and there are no event or touch streams. Tiles
+are axial hex cells `[q, r]` (flat-top, neighbors at 30 + 60k degrees, spacing
+sqrt(3) x side) persisted in `data/sim-layout.json`. Geometry matches the real unit
+(sideLength 67, zones at 50/67 of the side, `o` = center-to-zone direction). Zone
+ids come from (q, r, corner), so colors stay with their tile. `POST /api/sim/tiles`
+calls `setTiles()` (deduplicated, |q|,|r| < 32) and fires the
 normal `layout` event. The page shows a Layout tab only when `/api/layout`
 reports `sim: true`; while its sheet is open, dashed ghost slots appear next to
 existing tiles, tapping one adds a tile, and tapping a tile removes it. Disconnected layouts are allowed. The

@@ -11,7 +11,9 @@ no third-party libraries: plain Node with built-in modules only (no npm deps).
 
 | Path                  | Role                                                                                 |
 |-----------------------|--------------------------------------------------------------------------------------|
-| `src/server.mjs`      | touch-paint server (HTTP + SSE + UDP), touch and effect engines                      |
+| `src/nanoleaf.mjs`    | device library: discovery, pairing, REST, streaming, events, touch, touch id model   |
+| `src/server.mjs`      | touch-paint server (HTTP + SSE), touch and effect engines; device via the library    |
+| `src/sim.mjs`         | `SimDevice`: simulated controller for `--sim`, same methods as `Nanoleaf`            |
 | `src/effect.mjs`      | CLI: run one effect on the panels without the server                                 |
 | `src/pair.mjs`        | CLI: find controllers (SSDP), pair, write `token.json`                               |
 | `src/effects/`        | animations, one module per effect, for the server and the CLI; contract in `lib.mjs` |
@@ -67,6 +69,7 @@ node src/effect.mjs moon 1 --keep  # leave the last frame up (no restore)
 
 ## Conventions
 
+- All device access goes through `src/nanoleaf.mjs`; never call the controller (fetch, dgram) from other files. Keep the library free of app state, paths and data files.
 - Node built-ins only (`http`, `dgram`, `fetch`); no package.json. Node code stays in `src/`, browser code in `docs/`, files the server writes in `data/`. Don't add dependencies without asking.
 - Don't run `deno fmt`/lint or tests; don't install packages.
 - Commands that change device state (on/off, effect, streaming) are fine to run; they are visible and reversible.

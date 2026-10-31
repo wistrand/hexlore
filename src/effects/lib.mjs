@@ -7,6 +7,8 @@
 //   tiles:      [{ cx, cy, corners: [{ id, x, y, a }] }] corners sorted by angle a
 //   sideLength: tile side in layout units (67)
 
+import { groupTiles } from "../nanoleaf.mjs";
+
 // Brightness 0..1 to a warm RGB; dim end goes amber, bright end near white.
 export function warm(v) {
   v = Math.max(0, Math.min(1, v));
@@ -41,27 +43,14 @@ export class Canvas {
 
 export const rand = (a, b) => a + Math.random() * (b - a);
 
-// The ctx above from a device layout: `zones` are positionData entries of the lit
-// zones ({ panelId, x, y, o }). Zones are grouped into tiles by geometry, not list
-// order: each sits at 50/67 x sideLength from its tile center, in direction o mod 360.
-// Used by src/server.mjs and the CLI runner src/effect.mjs.
+// The ctx above from a device layout: `zones` are the lit zones ({ panelId, x, y, o }),
+// grouped into tiles by the device library's groupTiles(). Used by src/server.mjs and
+// the CLI runner src/effect.mjs.
 export function effectContext(zones, sideLength) {
-  const groups = [];
-  for (const z of zones) {
-    const a = ((z.o % 360) * Math.PI) / 180, r = (50 / 67) * sideLength;
-    const ex = z.x - r * Math.cos(a), ey = z.y - r * Math.sin(a);
-    let g = groups.find((g) => Math.hypot(g.ex - ex, g.ey - ey) < sideLength * 0.3);
-    if (!g) groups.push((g = { ex, ey, zs: [] }));
-    g.zs.push(z);
-  }
   return {
     sideLength,
     zones: zones.map((z) => ({ id: z.panelId, x: z.x, y: z.y })),
-    tiles: groups.map(({ zs }) => {
-      const cx = zs.reduce((s, z) => s + z.x, 0) / zs.length, cy = zs.reduce((s, z) => s + z.y, 0) / zs.length;
-      const corners = zs.map((z) => ({ id: z.panelId, x: z.x, y: z.y, a: Math.atan2(z.y - cy, z.x - cx) }));
-      return { cx, cy, corners: corners.sort((p, q) => p.a - q.a) };
-    }),
+    tiles: groupTiles(zones, sideLength),
   };
 }
 

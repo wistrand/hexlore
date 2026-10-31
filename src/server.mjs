@@ -5,10 +5,11 @@
 //          from the page. Uses its own sim-*.json files so the real picture is untouched.
 //   --tag X: separate data files (sim-X-*.json / X-*.json), for throwaway test instances.
 import http from "node:http";
-import dgram from "node:dgram";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Nanoleaf, predictTouchIds } from "./nanoleaf.mjs";
+import { SimDevice } from "./sim.mjs";
 import { effectContext as effectContextOf, loadEffects } from "./effects/lib.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -24,14 +25,8 @@ function serveStatic(url, res) {
   res.end(fs.readFileSync(file));
   return true;
 }
-const UDP_PORT = 60222;
 const SIM = process.argv.includes("--sim");
 const PORT = Number(process.argv.slice(2).find((a, i, all) => /^\d+$/.test(a) && all[i - 1] !== "--tag") ?? 8321);
-// token.json from src/pair.mjs: { auth_token, host }. Older files have no host.
-const CONFIG = SIM ? {} : JSON.parse(fs.readFileSync(path.join(HERE, "..", "token.json"), "utf8"));
-const HOST = CONFIG.host ?? "192.168.50.108";
-const TOKEN = CONFIG.auth_token ?? "";
-const BASE = `http://${HOST}:16021/api/v1/${TOKEN}`;
 // --tag X keeps a separate set of data files (e.g. for a throwaway test instance).
 const TAG = process.argv.includes("--tag") ? process.argv[process.argv.indexOf("--tag") + 1] : "";
 // Runtime data (picture, scenes, touch map, simulator tiles) lives in data/, untracked.
@@ -39,70 +34,16 @@ const DATA = path.join(HERE, "..", "data");
 fs.mkdirSync(DATA, { recursive: true });
 const dataFile = (name) => path.join(DATA, `${SIM ? "sim-" : ""}${TAG ? `${TAG}-` : ""}${name}`);
 
-// Simulated device: answers the same REST calls the server makes. Tiles sit on a hex
-// grid in axial coordinates (q, r); geometry matches the real unit: sideLength 67,
-// vertices at 0, 60, ... degrees, zones at 50/67 of the side from the tile center,
-// `o` = direction from center to zone. Zone ids are derived from (q, r, corner) so
-// colors stay attached to a tile when other tiles change.
-const SIM_SIDE = 67;
-const SIM_TILES_FILE = dataFile("layout.json");
-const FLOWER = [[0, 0], [1, -1], [1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1]];
-let simTiles = FLOWER;
-if (SIM) {
-  try {
-    simTiles = JSON.parse(fs.readFileSync(SIM_TILES_FILE, "utf8"));
-  } catch {}
-}
-const sim = { on: true, brightness: 100 };
-const simId = (q, r, k) => ((q + 32) * 64 + (r + 32)) * 8 + k + 1; // fits u16 for |q|,|r| < 32
-function simLayout() {
-  const positionData = [];
-  for (const [q, r] of simTiles) {
-    const cx = 400 + 1.5 * SIM_SIDE * q;
-    const cy = 400 + Math.sqrt(3) * SIM_SIDE * (r + q / 2);
-    for (let k = 0; k < 6; k++) {
-      const a = (k * Math.PI) / 3;
-      positionData.push({
-        panelId: simId(q, r, k),
-        x: Math.round(cx + (50 / 67) * SIM_SIDE * Math.cos(a)),
-        y: Math.round(cy + (50 / 67) * SIM_SIDE * Math.sin(a)),
-        o: k * 60,
-        shapeType: 15,
-        tile: `${q},${r}`,
-      });
-    }
-  }
-  return { numPanels: positionData.length, sideLength: SIM_SIDE, positionData };
-}
-function simApi(method, p, body) {
-  if (p === "/panelLayout/layout") return simLayout();
-  if (p === "/effects/select") return "*ExtControl*";
-  if (p === "/state/on") return { value: sim.on };
-  if (p === "/state/brightness") return { value: sim.brightness, max: 100, min: 0 };
-  if (method === "PUT" && p === "/state") {
-    if (body.on) sim.on = body.on.value;
-    if (body.brightness) sim.brightness = body.brightness.value;
-  }
-  return null;
-}
+// The controller, or with --sim the simulated one from src/sim.mjs (same methods, plus
+// an editable tile set). token.json from src/pair.mjs holds { auth_token, host }; older
+// files have no host. Each REST request times out after 5 s, which matters for
+// refreshLayout(): it runs one request at a time, and the controller can stall while
+// taking in new tiles.
+const device = SIM ? new SimDevice({ tilesFile: dataFile("layout.json") })
+  : Nanoleaf.fromFile(path.join(HERE, "..", "token.json"), { fallbackHost: "192.168.50.108" });
 
-async function api(method, p, body) {
-  if (SIM) return simApi(method, p, body);
-  // Timeout: refreshLayout() runs one request at a time, so a request the controller
-  // never answers (it can stall while taking in new tiles) would block every later
-  // refresh until Node's 5-minute default.
-  const res = await fetch(BASE + p, {
-    method,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(5000),
-  });
-  if (!res.ok) throw new Error(`${method} ${p}: ${res.status}`);
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
-}
-
-let layout = await api("GET", "/panelLayout/layout");
-let zones = layout.positionData.filter((p) => p.shapeType !== 12);
+let layout = await device.layout();
+let zones = layout.zones;
 // The picture survives server restarts in data/state.json.
 const STATE_FILE = dataFile("state.json");
 let saved = {};
@@ -118,13 +59,10 @@ function persist() {
     fs.renameSync(STATE_FILE + ".tmp", STATE_FILE);
   }, 1000);
 }
-const prevEffect = await api("GET", "/effects/select");
+const prevEffect = await device.effect();
 
 async function takeover() {
-  await api("PUT", "/state", { on: { value: true } });
-  await api("PUT", "/effects", {
-    write: { command: "display", animType: "extControl", extControlVersion: "v2" },
-  });
+  await device.startStream();
   dirty = true;
   await refreshStatus();
 }
@@ -158,52 +96,19 @@ let ripples = []; // { ids: tile zone ids, x, y, t0 }
 let overlay = new Map(); // zone id -> level 0..1: max of glow and ripples, what shown() uses
 let mapping = null; // { tiles: [[zone ids]], i, map: { touchId: zone ids } }
 
-// Tiles as lists of corner zone ids, top row first, left to right. Same grouping as
-// hexGroups() in docs/index.html: zones sit at ZONE_R x sideLength from the tile center,
-// in direction `o` mod 360.
-const ZONE_R = 50 / 67;
+// Tiles as lists of corner zone ids, top row first, left to right (the order mapping
+// runs light them in). Grouping is the library's groupTiles(), done in layoutFrom().
 function tiles() {
-  const side = layout.sideLength, groups = [];
-  for (const z of zones) {
-    const a = ((z.o % 360) * Math.PI) / 180;
-    const ex = z.x - ZONE_R * side * Math.cos(a), ey = z.y - ZONE_R * side * Math.sin(a);
-    let g = groups.find((g) => Math.hypot(g.ex - ex, g.ey - ey) < side * 0.3);
-    if (!g) groups.push((g = { ex, ey, ids: [] }));
-    g.ids.push(z.panelId);
-  }
-  const row = (g) => Math.round(g.ey / side);
-  return groups.sort((a, b) => row(b) - row(a) || a.ex - b.ex).map((g) => g.ids);
+  const row = (t) => Math.round(t.cy / layout.sideLength);
+  return [...layout.tiles].sort((a, b) => row(b) - row(a) || a.cx - b.cx).map((t) => t.corners.map((c) => c.id));
 }
 
-// Touch ID from corner IDs, no touching needed (model fitted to 20 tiles, matches all;
-// see agent_docs/architecture.md, "Tile and touch ids"). A tile's 6 corner IDs in
-// order of rising `o`, then its touch ID, are id(j) = K ^ L(j) for 7 consecutive j,
-// where L is the linear part of a reflected CRC-16 with polynomial 0x8005 (the
-// CRC-16/ARC family) over a little-endian counter: L(2k) = L(k) / x in the
-// bit-reflected domain. L(1) was measured; the rest follows. Neighbor XORs are then
-// L(j ^ (j + 1)) = L(2^n - 1), which reveals j mod 8 and so the step from the last
-// corner to the touch ID, except when j + 6 is a multiple of 8: then the carry length
-// is unknown and every L(2^n - 1), n >= 4, is a candidate (n = 4 half the time).
-const refl16 = (v) => { let r = 0; for (let i = 0; i < 16; i++) r = (r << 1) | ((v >> i) & 1); return r; };
-const divx = (y) => (y & 1 ? y ^ 0x18005 : y) >>> 1;
-const LB = []; // LB[k] = L(2^k)
-for (let y = refl16(0x90c1), k = 0; k < 16; k++, y = divx(y)) LB.push(refl16(y));
-const Lf = (j) => { let r = 0; for (let k = 0; k < 16; k++) if (j >> k & 1) r ^= LB[k]; return r; };
-const HIGH = Array.from({ length: 13 }, (_, i) => Lf((1 << (i + 4)) - 1));
+// Touch id candidates for a tile from its corner ids (library predictTouchIds(); model
+// in agent_docs/architecture.md, "Tile and touch ids").
 function predictTouch(ids) {
   const o = new Map(zones.map((z) => [z.panelId, z.o]));
-  if (ids.length !== 6 || ids.some((id) => !o.has(id))) return [];
-  const z = [...ids].sort((a, b) => o.get(a) - o.get(b));
-  const d = z.slice(1).map((id, i) => z[i] ^ id);
-  // Step i -> i + 1 is L((j + i) ^ (j + i + 1)); at a multiple of 8 any HIGH value fits.
-  const fits = (jl, i, s) => ((jl + i) % 8 === 7 ? HIGH.includes(s) : s === Lf((jl + i) ^ (jl + i + 1)));
-  const out = [];
-  for (let jl = 0; jl < 8; jl++) {
-    if (!d.every((s, i) => fits(jl, i, s))) continue;
-    const steps = (jl + 5) % 8 === 7 ? HIGH : [Lf((jl + 5) ^ (jl + 6))];
-    out.push(...steps.map((s) => z[5] ^ s));
-  }
-  return out;
+  if (ids.some((id) => !o.has(id))) return [];
+  return predictTouchIds(ids.map((id) => ({ id, o: o.get(id) })));
 }
 // Assign an unknown touch ID when exactly one tile predicts it. Returns whether it did.
 function learnTouch(id) {
@@ -218,23 +123,14 @@ function learnTouch(id) {
   return true;
 }
 
-// Prefill the map without touching: the getHeatmap device command lists every tile
-// by touch ID (base64 TLV: type 1 count, type 2 records of id u16 + 5 bytes). Each ID
-// goes to the tile that predicts it; candidate sets that overlap are resolved by
-// elimination. Runs at startup and after layout changes.
+// Prefill the map without touching: the device lists every tile by touch ID
+// (touchIds(), from the getHeatmap command). Each ID goes to the tile that predicts it;
+// candidate sets that overlap are resolved by elimination. Runs at startup and after
+// layout changes.
 async function prefillTouchMap() {
   if (SIM) return;
   try {
-    const { heatmapData } = await api("PUT", "/effects", { write: { command: "getHeatmap" } });
-    const b = Buffer.from(heatmapData, "base64");
-    let recs = Buffer.alloc(0);
-    for (let i = 0; i + 3 <= b.length; ) {
-      const type = b[i], len = b.readUInt16BE(i + 1);
-      if (type === 2) recs = b.subarray(i + 3, i + 3 + len);
-      i += 3 + len;
-    }
-    const ids = [];
-    for (let o = 0; o + 7 <= recs.length; o += 7) ids.push(recs.readUInt16BE(o));
+    const ids = await device.touchIds();
     let open = tiles().map((t) => ({ t, p: new Set(predictTouch(t)) }));
     let todo = ids.slice(), added = 0;
     for (let progress = true; progress && todo.length; ) {
@@ -326,34 +222,27 @@ function mapTouch(id, type) {
   sendTouch();
 }
 
-// UDP touch packet: n u16, then per tile id u16, type<<4 | strength u8, swipedFrom u16.
-// Types: 0 hover, 1 down, 2 hold, 3 up, 4 swipe. Strength 0..15.
-function onTouch(buf) {
-  if (buf.length < 2) return;
-  const n = buf.readUInt16BE(0), now = Date.now();
-  for (let i = 0, o = 2; i < n && o + 5 <= buf.length; i++, o += 5) {
-    const id = buf.readUInt16BE(o), type = buf[o + 2] >> 4, strength = buf[o + 2] & 15;
-    if (mapping) {
-      mapTouch(id, type);
-      continue;
-    }
-    if (touchMode === "off") continue;
-    if (!(id in touchMap) && (type === 0 || type === 1 || type === 2) && !learnTouch(id) && type !== 0) {
-      startMapping(id);
-      if (mapping) continue;
-    }
-    if (touchMode === "paint") {
-      if (type === 1 || type === 2 || type === 4) paintTile(touchMap[id]);
-      continue;
-    }
-    if (touchMode === "ripple" && (type === 1 || type === 4)) spawnRipple(touchMap[id]);
-    const level = type === 0 ? (HOVER_MAX * strength) / 15 : 1;
-    for (const zid of touchMap[id] ?? []) {
-      const g = glow.get(zid);
-      if (type === 3) {
-        if (g) g.t = 0;
-      } else if (!g || level >= g.level) glow.set(zid, { level, t: now });
-    }
+// One record from the device's touch stream (library touch()). Types: 0 hover, 1 down,
+// 2 hold, 3 up, 4 swipe; strength 0..15.
+function onTouch({ id, type, strength }) {
+  const now = Date.now();
+  if (mapping) return mapTouch(id, type);
+  if (touchMode === "off") return;
+  if (!(id in touchMap) && (type === 0 || type === 1 || type === 2) && !learnTouch(id) && type !== 0) {
+    startMapping(id);
+    if (mapping) return;
+  }
+  if (touchMode === "paint") {
+    if (type === 1 || type === 2 || type === 4) paintTile(touchMap[id]);
+    return;
+  }
+  if (touchMode === "ripple" && (type === 1 || type === 4)) spawnRipple(touchMap[id]);
+  const level = type === 0 ? (HOVER_MAX * strength) / 15 : 1;
+  for (const zid of touchMap[id] ?? []) {
+    const g = glow.get(zid);
+    if (type === 3) {
+      if (g) g.t = 0;
+    } else if (!g || level >= g.level) glow.set(zid, { level, t: now });
   }
 }
 
@@ -439,25 +328,6 @@ function shown(id, c) {
   return g ? base.map((v, k) => Math.max(v, Math.round(GLOW[k] * g))) : base;
 }
 
-// v2 frame: nPanels u16, then per panel id u16, r g b w u8, transition u16 (100 ms units)
-function frame() {
-  const buf = Buffer.alloc(2 + colors.size * 8);
-  buf.writeUInt16BE(colors.size, 0);
-  let o = 2;
-  for (const [id, c] of colors) {
-    const [r, g, b] = shown(id, c);
-    buf.writeUInt16BE(id, o);
-    buf.writeUInt8(r, o + 2);
-    buf.writeUInt8(g, o + 3);
-    buf.writeUInt8(b, o + 4);
-    buf.writeUInt8(0, o + 5);
-    buf.writeUInt16BE(0, o + 6);
-    o += 8;
-  }
-  return buf;
-}
-
-const udp = dgram.createSocket("udp4");
 let dirty = true;
 // Send on change, and resend the full frame every second anyway: UDP has no delivery
 // guarantee, so a lost packet would otherwise leave the panels stale until the next edit.
@@ -485,7 +355,7 @@ setInterval(() => {
   if (!dirty && ++ticks < 25) return;
   dirty = false;
   ticks = 0;
-  if (!SIM) udp.send(frame(), UDP_PORT, HOST);
+  device.send(new Map([...colors].map(([id, c]) => [id, shown(id, c)])));
 }, 40);
 
 // SSE clients get the full state on connect, then each change set, plus a named
@@ -498,10 +368,10 @@ let refreshing = null;
 function refreshLayout(reason) {
   refreshing ??= (async () => {
     try {
-      const next = await api("GET", "/panelLayout/layout");
+      const next = await device.layout();
       if (JSON.stringify(next) === JSON.stringify(layout)) return;
       layout = next;
-      zones = layout.positionData.filter((p) => p.shapeType !== 12);
+      zones = layout.zones;
       colors = new Map(zones.map((z) => [z.panelId, colors.get(z.panelId) ?? [0, 0, 0]]));
       dirty = true;
       console.log(`layout changed (${reason}): ${zones.length} zones`);
@@ -529,9 +399,9 @@ let status = { on: true, effect: "*ExtControl*", streaming: true };
 const statusMsg = () => `event: status\ndata: ${JSON.stringify(status)}\n\n`;
 async function refreshStatus() {
   try {
-    const on = (await api("GET", "/state/on")).value;
-    const effect = await api("GET", "/effects/select");
-    const brightness = (await api("GET", "/state/brightness")).value;
+    const on = await device.isOn();
+    const effect = await device.effect();
+    const brightness = await device.brightness();
     const next = { on, effect, brightness, streaming: on && effect === "*ExtControl*" };
     if (JSON.stringify(next) === JSON.stringify(status)) return;
     if (next.streaming && !status.streaming) dirty = true;
@@ -544,55 +414,12 @@ async function refreshStatus() {
 }
 setInterval(refreshStatus, 5000);
 
-// Device event stream: id 1 = state (on/off, brightness), 2 = layout (panels added,
-// removed, orientation), 3 = effects. Reconnects on drop; polls cover missed events.
-async function watchLayoutEvents() {
-  for (;;) {
-    try {
-      const res = await fetch(`${BASE}/events?id=1,2,3`);
-      if (!res.ok) throw new Error(`events: ${res.status}`);
-      const decoder = new TextDecoder();
-      let buf = "";
-      for await (const chunk of res.body) {
-        buf += decoder.decode(chunk, { stream: true });
-        let i;
-        while ((i = buf.indexOf("\n\n")) >= 0) {
-          const msg = buf.slice(0, i);
-          buf = buf.slice(i + 2);
-          if (!/^data:/m.test(msg)) continue;
-          const kind = Number(/^id:\s*(\d+)/m.exec(msg)?.[1]);
-          if (kind === 2) refreshLayout("device event");
-          else refreshStatus();
-        }
-      }
-    } catch (e) {
-      console.error(`event stream: ${e.message}`);
-    }
-    await new Promise((r) => setTimeout(r, 5000));
-  }
-}
-// Touch stream: the device sends per-tile touch packets over UDP to the port named in
-// the TouchEventsPort header, for as long as this id=4 (gesture) stream stays open.
-// Gestures themselves carry no tile (panelId -1) and are not used.
-const touchUdp = dgram.createSocket("udp4");
-touchUdp.on("message", onTouch);
-async function watchTouch() {
-  await new Promise((r) => touchUdp.bind(0, r));
-  const port = touchUdp.address().port;
-  for (;;) {
-    try {
-      const res = await fetch(`${BASE}/events?id=4`, { headers: { TouchEventsPort: String(port) } });
-      if (!res.ok) throw new Error(`touch events: ${res.status}`);
-      for await (const _ of res.body);
-    } catch (e) {
-      console.error(`touch stream: ${e.message}`);
-    }
-    await new Promise((r) => setTimeout(r, 5000));
-  }
-}
+// Device events (1 state, 2 layout, 3 effects) and the raw touch stream, both from the
+// library with reconnects; the polls cover missed events.
 if (!SIM) {
-  watchLayoutEvents();
-  watchTouch();
+  device.events(({ id }) => (id === 2 ? refreshLayout("device event") : refreshStatus()),
+    { onError: (e) => console.error(`event stream: ${e.message}`) });
+  device.touch(onTouch, { onError: (e) => console.error(`touch stream: ${e.message}`) });
   setInterval(() => refreshLayout("poll"), 30_000);
 }
 function broadcast(set) {
@@ -668,21 +495,16 @@ const server = http.createServer(async (req, res) => {
       });
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
-        sideLength: layout.sideLength, sim: SIM, tiles: out,
-        controller: layout.positionData.find((p) => p.shapeType === 12) ?? null,
+        sideLength: layout.sideLength, sim: SIM, tiles: out, controller: layout.controller,
       }));
     } else if (req.method === "GET" && req.url === "/api/layout") {
       res.writeHead(200, { "content-type": "application/json" });
-      const controller = layout.positionData.find((p) => p.shapeType === 12);
-      res.end(JSON.stringify({ sideLength: layout.sideLength, zones, controller, sim: SIM, tiles: SIM ? simTiles : undefined }));
+      res.end(JSON.stringify({
+        sideLength: layout.sideLength, zones, controller: layout.controller ?? undefined, sim: SIM, tiles: SIM ? device.tiles : undefined,
+      }));
     } else if (SIM && req.method === "POST" && req.url === "/api/sim/tiles") {
-      // Replace the simulated tile set: [[q, r], ...], deduplicated and range-checked.
-      const { tiles } = await readJson(req);
-      const seen = new Set();
-      simTiles = (Array.isArray(tiles) ? tiles : [])
-        .map(([q, r]) => [q | 0, r | 0])
-        .filter(([q, r]) => Math.abs(q) < 32 && Math.abs(r) < 32 && !seen.has(`${q},${r}`) && seen.add(`${q},${r}`));
-      fs.writeFileSync(SIM_TILES_FILE, JSON.stringify(simTiles));
+      // Replace the simulated tile set: [[q, r], ...] (validated by SimDevice).
+      device.setTiles((await readJson(req)).tiles);
       await refreshLayout("sim edit");
       persist();
       res.writeHead(204).end();
@@ -718,10 +540,10 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(204).end();
     } else if (req.url === "/api/brightness" && req.method === "GET") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(await api("GET", "/state/brightness")));
+      res.end(JSON.stringify({ value: await device.brightness() }));
     } else if (req.url === "/api/brightness" && req.method === "POST") {
       const { value } = await readJson(req);
-      await api("PUT", "/state", { brightness: { value: Math.max(0, Math.min(100, value | 0)) } });
+      await device.setBrightness(value | 0);
       res.writeHead(204).end();
     } else if (req.method === "GET" && req.url === "/api/effects") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -778,7 +600,7 @@ async function shutdown() {
   console.log("\nshutting down");
   if (typeof prevEffect === "string" && !prevEffect.startsWith("*")) {
     try {
-      await api("PUT", "/effects", { select: prevEffect });
+      await device.selectEffect(prevEffect);
       console.log(`restored effect: ${prevEffect}`);
     } catch (e) {
       console.error(e.message);

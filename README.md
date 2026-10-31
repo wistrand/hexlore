@@ -69,6 +69,29 @@ node src/effect.mjs moon --keep # leave the result up after Ctrl-C
 
 Stop the app first; both stream to the same panels and would overwrite each other.
 
+## Using the panels from your own code
+
+`src/nanoleaf.mjs` is a single-file library the app itself is built on. It has no
+dependencies and knows nothing about the app, so it can be copied into other
+projects.
+
+```js
+import { Nanoleaf, discover, pair } from "./src/nanoleaf.mjs";
+
+const [controller] = await discover();
+const token = await pair(controller.ip);     // hold the power button meanwhile
+const nl = new Nanoleaf({ host: controller.ip, token });
+
+const { tiles } = await nl.layout();         // tiles with their six corner zones
+await nl.startStream();
+nl.send(Object.fromEntries(tiles[0].corners.map((c) => [c.id, [255, 160, 60]])));
+
+const stop = nl.touch(({ id, type, strength }) => console.log(id, type, strength));
+```
+
+It also covers brightness, effects, device events, the touch id of each tile and
+raw device commands; see the comments at the top of the file.
+
 ## What hexlore documents
 
 Verified on an NL52 controller with firmware 12.4.1:
@@ -91,7 +114,7 @@ tiles and their ids.
 
 | Path          | Contents                                                          |
 |---------------|-------------------------------------------------------------------|
-| `src/`        | the server, pairing and effect command-line tools, `effects/`     |
+| `src/`        | device library, server, pairing and effect tools, `effects/`      |
 | `docs/`       | the browser app and the `/tiles` reference page                   |
 | `data/`       | your painting, saved scenes and touch map; not version controlled |
 | `media/`      | images for this README                                            |
