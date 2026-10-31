@@ -35,7 +35,7 @@ You need Node and an Elements controller on the same network.
 1. Pair with the controller:
 
    ```bash
-   node src/pair.mjs
+   node src/hexlore.mjs pair
    ```
 
    It finds the controller on your network, then asks you to hold the
@@ -52,19 +52,37 @@ You need Node and an Elements controller on the same network.
 3. Open `http://<this machine>:8321` on a phone or computer on the same network.
 
 If the controller isn't found, pass its address from your router's device list:
-`node src/pair.mjs --ip <address>`. If its address changes later, run
-`node src/pair.mjs --find` to see the new one and pair again.
+`node src/hexlore.mjs pair --ip <address>`. If its address changes later, run
+`node src/hexlore.mjs find` to see the new one and pair again.
 
 Stopping the app with Ctrl-C puts back the effect the panels were showing before.
 
 To explore without a device: `node src/server.mjs 8322 --sim`.
 
-## Effects from the command line
+## Controlling the panels from the command line
 
 ```bash
-node src/effect.mjs --list      # what is available
-node src/effect.mjs rain 20     # run for 20 seconds, then restore the previous effect
-node src/effect.mjs moon --keep # leave the result up after Ctrl-C
+node src/hexlore.mjs status          # name, firmware, power, brightness, current effect
+node src/hexlore.mjs off             # and on
+node src/hexlore.mjs brightness 40 2 # fade to 40% over 2 seconds
+node src/hexlore.mjs ct 2700         # plain warm white
+node src/hexlore.mjs effects         # the controller's built-in effects
+node src/hexlore.mjs select Ember    # play one
+node src/hexlore.mjs identify        # flash the panels
+node src/hexlore.mjs touch           # watch touches live
+```
+
+`node src/hexlore.mjs help` lists the rest, including the tile layout and raw device
+commands.
+
+## hexlore's animations from the command line
+
+The same animations the app offers, without the app:
+
+```bash
+node src/hexlore.mjs run             # what is available
+node src/hexlore.mjs run rain 20     # run for 20 seconds, then restore the previous effect
+node src/hexlore.mjs run moon --keep # leave the result up after Ctrl-C
 ```
 
 Stop the app first; both stream to the same panels and would overwrite each other.
@@ -80,6 +98,7 @@ import { Nanoleaf, discover, pair } from "./src/nanoleaf.mjs";
 
 const [controller] = await discover();
 const token = await pair(controller.ip);     // hold the power button meanwhile
+if (!token) throw new Error("pairing timed out: hold the power button 5 to 7 s");
 const nl = new Nanoleaf({ host: controller.ip, token });
 
 const { tiles } = await nl.layout();         // tiles with their six corner zones
@@ -121,6 +140,10 @@ tiles and their ids.
 | `agent_docs/` | protocol, hardware and troubleshooting notes                      |
 
 No dependencies beyond Node's built-in modules.
+
+## License
+
+Copyright 2026 Erik Wistrand. Licensed under the [Apache License, Version 2.0](LICENSE).
 
 Nanoleaf and Elements are trademarks of Nanoleaf. This project is not
 affiliated with or endorsed by Nanoleaf.

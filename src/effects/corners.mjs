@@ -1,4 +1,4 @@
-// Ported from the former zones_demo.py: shows the tile structure. Each tile in turn lights one corner
+// Shows the tile structure. Each tile in turn lights one corner
 // at a time (two laps) and then all six; then every tile chases its corners in sync.
 // Loops.
 

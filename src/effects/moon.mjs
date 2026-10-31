@@ -1,4 +1,4 @@
-// Ported from the former moon.py: a static crescent (shadow disk offset 0.35: 0.15 thin .. 0.6 fat).
+// A static crescent (shadow disk offset 0.35: 0.15 thin .. 0.6 fat).
 
 import { Canvas } from "./lib.mjs";
 

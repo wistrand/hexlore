@@ -1,4 +1,4 @@
-// Ported from the former pixel_show.py: every tile spins a light around its corners, neighbors in
+// Every tile spins a light around its corners, neighbors in
 // alternating directions.
 
 import { warm } from "./lib.mjs";

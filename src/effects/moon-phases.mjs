@@ -1,4 +1,4 @@
-// Ported from the former moon_phases.py: a full lunar cycle every 20 s, northern-hemisphere view
+// A full lunar cycle every 20 s, northern-hemisphere view
 // (waxing is lit on the right).
 //
 // Designed around the panel optics (agent_docs/research.md): one lit corner lights

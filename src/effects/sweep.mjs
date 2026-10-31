@@ -1,4 +1,4 @@
-// Ported from the former stream_demo.py: a warm sine sweep across the wall, then ripples from the
+// A warm sine sweep across the wall, then ripples from the
 // center, alternating every 10 s.
 
 export const meta = { name: "Sweep and ripple", description: "Sine sweep left to right, then ripples from the center" };

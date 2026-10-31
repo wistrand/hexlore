@@ -1,4 +1,4 @@
-// Ported from the former pixel_show.py: a double heartbeat pulsing from the center.
+// A double heartbeat pulsing from the center.
 
 import { Canvas } from "./lib.mjs";
 

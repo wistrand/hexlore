@@ -24,8 +24,11 @@ export class Canvas {
     this.pos = new Map(zones.map((z) => [z.id, [(z.x - x0) / (x1 - x0 || 1), (z.y - y0) / (y1 - y0 || 1)]]));
     this.buf = new Map(zones.map((z) => [z.id, 0]));
   }
-  fade(k) {
-    for (const [id, v] of this.buf) this.buf.set(id, v * k);
+  // Multiplies every level by k per 1/25 s (the factors were tuned at 25 fps); pass the
+  // frame's dt so trails last the same time at any frame rate.
+  fade(k, dt = 1 / 25) {
+    const f = k ** (dt * 25);
+    for (const [id, v] of this.buf) this.buf.set(id, v * f);
   }
   blob(x, y, r, v = 1) {
     for (const [id, [px, py]] of this.pos) {
@@ -45,7 +48,7 @@ export const rand = (a, b) => a + Math.random() * (b - a);
 
 // The ctx above from a device layout: `zones` are the lit zones ({ panelId, x, y, o }),
 // grouped into tiles by the device library's groupTiles(). Used by src/server.mjs and
-// the CLI runner src/effect.mjs.
+// `run` in src/hexlore.mjs.
 export function effectContext(zones, sideLength) {
   return {
     sideLength,

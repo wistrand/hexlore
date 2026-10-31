@@ -35,8 +35,8 @@ fs.mkdirSync(DATA, { recursive: true });
 const dataFile = (name) => path.join(DATA, `${SIM ? "sim-" : ""}${TAG ? `${TAG}-` : ""}${name}`);
 
 // The controller, or with --sim the simulated one from src/sim.mjs (same methods, plus
-// an editable tile set). token.json from src/pair.mjs holds { auth_token, host }; older
-// files have no host. Each REST request times out after 5 s, which matters for
+// an editable tile set). token.json from `node src/hexlore.mjs pair` holds
+// { auth_token, host }; older files have no host. Each REST request times out after 5 s, which matters for
 // refreshLayout(): it runs one request at a time, and the controller can stall while
 // taking in new tiles.
 const device = SIM ? new SimDevice({ tilesFile: dataFile("layout.json") })
@@ -52,12 +52,15 @@ try {
 } catch {}
 let colors = new Map(zones.map((z) => [z.panelId, saved[z.panelId] ?? [0, 0, 0]]));
 let saveTimer = null;
+function saveState() {
+  saveTimer = null;
+  fs.writeFileSync(STATE_FILE + ".tmp", JSON.stringify(Object.fromEntries(colors)));
+  fs.renameSync(STATE_FILE + ".tmp", STATE_FILE);
+}
+// Debounced save; shutdown() writes a pending one at once.
 function persist() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    fs.writeFileSync(STATE_FILE + ".tmp", JSON.stringify(Object.fromEntries(colors)));
-    fs.renameSync(STATE_FILE + ".tmp", STATE_FILE);
-  }, 1000);
+  saveTimer = setTimeout(saveState, 1000);
 }
 const prevEffect = await device.effect();
 
@@ -463,7 +466,10 @@ function readJson(req) {
     let data = "";
     req.on("data", (d) => {
       data += d;
-      if (data.length > 100_000) req.destroy();
+      if (data.length > 100_000) {
+        reject(new Error("request body too large"));
+        req.destroy();
+      }
     });
     req.on("end", () => {
       try {
@@ -518,6 +524,9 @@ const server = http.createServer(async (req, res) => {
       res.write(statusMsg());
       res.write(touchMsg());
       res.write(effectMsg());
+      // Current glow levels (possibly none): a page that reconnects mid-glow would
+      // otherwise keep the levels it had and miss the final empty set.
+      res.write(`event: glow\ndata: ${JSON.stringify(Object.fromEntries(overlay))}\n\n`);
       clients.add(res);
       req.on("close", () => clients.delete(res));
     } else if (req.method === "POST" && req.url === "/api/paint") {
@@ -543,7 +552,8 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ value: await device.brightness() }));
     } else if (req.url === "/api/brightness" && req.method === "POST") {
       const { value } = await readJson(req);
-      await device.setBrightness(value | 0);
+      if (!Number.isFinite(value)) return res.writeHead(400).end("value: expected a number");
+      await device.setBrightness(value);
       res.writeHead(204).end();
     } else if (req.method === "GET" && req.url === "/api/effects") {
       res.writeHead(200, { "content-type": "application/json" });
@@ -598,6 +608,10 @@ server.listen(PORT, "0.0.0.0", async () => {
 
 async function shutdown() {
   console.log("\nshutting down");
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveState();
+  }
   if (typeof prevEffect === "string" && !prevEffect.startsWith("*")) {
     try {
       await device.selectEffect(prevEffect);

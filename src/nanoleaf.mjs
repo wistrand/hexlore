@@ -31,12 +31,15 @@ export const TOUCH = { HOVER: 0, DOWN: 1, HOLD: 2, UP: 3, SWIPE: 4 };
 export const SHAPE = { CONTROLLER: 12, HEX: 14, KITE: 15 };
 
 export class Nanoleaf {
-  // host: controller IP; token: auth token from pair(); timeout: per REST request, ms.
-  constructor({ host, token, timeout = 5000 }) {
-    if (!host || !token) throw new Error("Nanoleaf needs host and token");
+  // host: controller IP; token: auth token from pair(); timeout: per REST request, ms;
+  // onError(err): send() failures (UDP errors such as EHOSTUNREACH), default console.
+  constructor({ host, token, timeout = 5000, onError = (e) => console.error(`nanoleaf: ${e.message}`) }) {
+    if (!host) throw new Error("Nanoleaf needs a host (controller IP)");
+    if (!token) throw new Error("Nanoleaf needs a token (did pairing time out?)");
     this.host = host;
     this.token = token;
     this.timeout = timeout;
+    this.onError = onError;
     this.base = `http://${host}:${REST_PORT}/api/v1/${token}`;
     this.udp = null;
     this.stops = new Set();
@@ -81,6 +84,17 @@ export class Nanoleaf {
     return this.request("PUT", "/state", { brightness: duration ? { value: v, duration } : { value: v } });
   }
 
+  // Whole-panel white at a color temperature in kelvin (1500..4000 on Elements). Ends
+  // any effect or stream, like selecting a color in the Nanoleaf app.
+  setColorTemperature(kelvin, duration) {
+    const v = Math.round(kelvin);
+    return this.request("PUT", "/state", { ct: duration ? { value: v, duration } : { value: v } });
+  }
+  // Flashes the panels briefly, to find which controller is which.
+  identify() {
+    return this.request("PUT", "/identify");
+  }
+
   // Name of the selected effect. Streaming shows as "*ExtControl*"; other names in
   // stars are pseudo-effects too and can't be selected back.
   effect() {
@@ -94,6 +108,8 @@ export class Nanoleaf {
   }
 
   // Device command through the effects write channel, e.g. "requestTouchConfig".
+  // Sends any name, including setters, calibration and trigger* commands that change
+  // persistent device state; stick to get*/request*/is* unless you mean to write.
   // Some replies carry secrets (Thread keys, tokens): don't log them blindly.
   command(name, params = {}) {
     return this.request("PUT", "/effects", { write: { command: name, ...params } });
@@ -129,10 +145,14 @@ export class Nanoleaf {
 
   // Sends one frame: colors as a Map or object of zone id -> [r, g, b]; transition in
   // 100 ms units (0 = hard cut). Zones left out keep their color. UDP has no delivery
-  // guarantee, so resend the full frame now and then.
+  // guarantee, so resend the full frame now and then. Errors go to onError: without a
+  // listener, a failed UDP send would be an unhandled 'error' event and end the process.
   send(colors, { transition = 0 } = {}) {
-    this.udp ??= dgram.createSocket("udp4");
-    this.udp.send(encodeFrame(colors, transition), STREAM_PORT, this.host);
+    if (!this.udp) {
+      this.udp = dgram.createSocket("udp4");
+      this.udp.on("error", (e) => this.onError(e));
+    }
+    this.udp.send(encodeFrame(colors, transition), STREAM_PORT, this.host, (e) => e && this.onError(e));
   }
 
   // Device events over SSE: ids 1 state, 2 layout, 3 effects, 4 gestures. Calls
@@ -149,6 +169,7 @@ export class Nanoleaf {
   touch(onTouch, { retry = 5000, onError } = {}) {
     const sock = dgram.createSocket("udp4");
     sock.on("message", (buf) => { for (const t of decodeTouch(buf)) onTouch(t); });
+    sock.on("error", (e) => (onError ?? this.onError)(e));
     let stopStream = null, stopped = false;
     sock.bind(0, () => {
       if (stopped) return;
@@ -156,6 +177,7 @@ export class Nanoleaf {
       stopStream = this.#stream("/events?id=4", headers, () => {}, retry, onError);
     });
     const stop = () => {
+      if (stopped) return; // closing a dgram socket twice throws
       stopped = true;
       stopStream?.();
       sock.close();
@@ -222,7 +244,12 @@ export async function discover({ timeout = 3000 } = {}) {
     .filter((a) => a.family === "IPv4" && !a.internal).map((a) => a.address);
   const sockets = await Promise.all(addrs.map((addr) => new Promise((resolve) => {
     const s = dgram.createSocket({ type: "udp4", reuseAddr: true });
-    s.on("error", () => resolve(null));
+    // An interface that can't bind or send is skipped; its socket is closed so it
+    // can't keep the process alive.
+    s.on("error", () => {
+      try { s.close(); } catch {}
+      resolve(null);
+    });
     s.on("message", (msg, rinfo) => {
       const text = msg.toString();
       const header = (name) => new RegExp(`^${name}:\\s*(.+)$`, "mi").exec(text)?.[1].trim();
@@ -240,7 +267,7 @@ export async function discover({ timeout = 3000 } = {}) {
     });
   })));
   await new Promise((r) => setTimeout(r, timeout));
-  for (const s of sockets) s?.close();
+  for (const s of sockets) { try { s?.close(); } catch {} } // may already be closed by an error
   return [...found.values()];
 }
 

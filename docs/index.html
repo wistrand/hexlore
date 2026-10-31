@@ -461,7 +461,8 @@ function render() {
 
     // Rim: each edge is lit from its two end corners; the halo is the same edge blurred onto the background.
     const edges = hex.map((p0, i) => {
-      const p1 = hex[(i + 1) % 6];
+      // hex has one vertex per zone: fewer than 6 while new tiles are still joining.
+      const p1 = hex[(i + 1) % hex.length];
       const [x1, y1] = T(p0), [x2, y2] = T(p1);
       const grad = svgEl("linearGradient", {
         id: `edge${gi}_${i}`, gradientUnits: "userSpaceOnUse", x1, y1, x2, y2,
@@ -634,7 +635,7 @@ function paintZone(id) {
   const mean = [0, 1, 2].map((ch) => lights.reduce((s2, [c, I]) => s2 + c[ch] * I, 0));
   h.backEl.setAttribute("fill", rgbCss(total ? scale(mean, (tone(total) / total) * M) : [0, 0, 0]));
   h.edges.forEach((stops, i) => {
-    const [ax, ay] = h.verts[i], [bx, by] = h.verts[(i + 1) % 6];
+    const [ax, ay] = h.verts[i], [bx, by] = h.verts[(i + 1) % h.verts.length];
     const mx = (ax + bx) / 2, my = (ay + by) / 2;
     const nl = Math.hypot(h.cx - mx, h.cy - my);
     const n = [(h.cx - mx) / nl, (h.cy - my) / nl]; // inward wall normal
@@ -716,14 +717,19 @@ function queue(id, c, record = true) {
   paintZone(id, c);
   if (!timer) timer = setTimeout(flush, 30);
 }
-async function flush() {
+// One POST at a time, in order: overlapping requests could reach the server swapped
+// and leave a zone with the older color.
+let sending = Promise.resolve();
+function flush() {
   timer = null;
   const body = pending;
   pending = {};
-  let ok = false;
-  try { ok = (await fetch("/api/paint", { method: "POST", body: JSON.stringify(body) })).ok; } catch {}
-  // A lost send leaves the page showing colors the server never got: resync.
-  if (!ok) { statusEl.textContent = "send failed, resyncing"; resync(); }
+  sending = sending.then(async () => {
+    let ok = false;
+    try { ok = (await fetch("/api/paint", { method: "POST", body: JSON.stringify(body) })).ok; } catch {}
+    // A lost send leaves the page showing colors the server never got: resync.
+    if (!ok) { statusEl.textContent = "send failed, resyncing"; resync(); }
+  });
 }
 
 function zoneAt(x, y) {
@@ -867,6 +873,7 @@ function buildSwatches() {
     const b = document.createElement("button");
     b.className = "swatch";
     b.style.background = rgbCss(c);
+    b.dataset.rgb = String(c); // compare by value; style.background reads back reformatted
     b.setAttribute("aria-label", `color ${rgbCss(c)}`);
     b.onclick = () => {
       brush = c;
@@ -904,18 +911,25 @@ function pickFrom(id) {
   erasing = false;
   eraseBtn.classList.remove("active");
   document.querySelectorAll(".swatch").forEach((s) =>
-    s.classList.toggle("active", s.style.background === rgbCss(brush)));
+    s.classList.toggle("active", s.dataset.rgb === String(brush)));
   statusEl.textContent = `picked ${rgbCss(c)}`;
   brushChanged();
 }
 
 // Scenes are stored on the server so every device shares them; loading is undoable.
+// After a load the menu goes back to its first entry, now labelled with the scene's
+// name, so choosing the same scene again fires another change. Save and Delete act on
+// that last scene unless another one is selected.
 const scenesSel = document.getElementById("scenes");
+let lastScene = "";
+const escapeHtml = (s) => s.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`);
 async function refreshScenes(select) {
   const names = Object.keys(await (await fetch("/api/scenes")).json()).sort();
-  scenesSel.innerHTML = '<option value="">Scenes</option>' +
-    names.map((n) => `<option>${n.replace(/[&<>"]/g, (ch) => `&#${ch.charCodeAt(0)};`)}</option>`).join("");
-  scenesSel.value = select ?? "";
+  if (select !== undefined) lastScene = names.includes(select) ? select : "";
+  if (!names.includes(lastScene)) lastScene = "";
+  scenesSel.innerHTML = `<option value="">${lastScene ? escapeHtml(lastScene) : "Scenes"}</option>` +
+    names.map((n) => `<option>${escapeHtml(n)}</option>`).join("");
+  scenesSel.value = "";
 }
 scenesSel.onchange = async () => {
   const name = scenesSel.value;
@@ -924,9 +938,11 @@ scenesSel.onchange = async () => {
   const scene = scenes[name] ?? {};
   applySet([...els.keys()].map((id) => [id, scene[id] ?? [0, 0, 0]]));
   statusEl.textContent = `loaded "${name}"`;
+  await refreshScenes(name);
+  scenesSel.blur();
 };
 document.getElementById("sceneSave").onclick = async () => {
-  const name = prompt("Scene name", scenesSel.value || "")?.trim();
+  const name = prompt("Scene name", scenesSel.value || lastScene)?.trim();
   if (!name) return;
   const colors = Object.fromEntries([...els.keys()].map((id) => [id, state.get(id) ?? [0, 0, 0]]));
   await fetch(`/api/scenes/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(colors) });
@@ -934,7 +950,7 @@ document.getElementById("sceneSave").onclick = async () => {
   statusEl.textContent = `saved "${name}"`;
 };
 document.getElementById("sceneDelete").onclick = async () => {
-  const name = scenesSel.value;
+  const name = scenesSel.value || lastScene;
   if (!name || !confirm(`Delete scene "${name}"?`)) return;
   await fetch(`/api/scenes/${encodeURIComponent(name)}`, { method: "DELETE" });
   await refreshScenes();
@@ -959,8 +975,12 @@ master.oninput = () => {
 
 // Keyboard shortcuts (ignored while typing in a field).
 addEventListener("keydown", (e) => {
-  if (e.target instanceof Element && e.target.closest("input, select, textarea")) return;
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+  // A focused slider ignores these keys, so shortcuts stay live there. A focused select
+  // uses letters and digits to jump between options: there only Ctrl/Cmd keys and
+  // Escape go through. Text fields get no shortcuts.
+  const field = e.target instanceof Element ? e.target.closest("input, select, textarea") : null;
+  if (field && field.type !== "range" && !(field.tagName === "SELECT" && (mod || k === "escape"))) return;
   if (mod && k === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (mod && k === "y") { e.preventDefault(); redo(); }
   else if (mod) return;

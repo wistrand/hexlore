@@ -1,4 +1,4 @@
-// Ported from the former pixel_show.py: a ball bouncing with gravity, leaving a short trail.
+// A ball bouncing with gravity, leaving a short trail.
 
 import { Canvas } from "./lib.mjs";
 
@@ -14,7 +14,7 @@ export function create({ zones }) {
       y += vy * dt;
       if (y < 0) [y, vy] = [0, Math.abs(vy) * 0.92 + 0.05];
       if (x < 0 || x > 1) [vx, x] = [-vx, Math.min(1, Math.max(0, x))];
-      c.fade(0.75);
+      c.fade(0.75, dt);
       c.blob(x, y, 0.18);
       return c.colors();
     },

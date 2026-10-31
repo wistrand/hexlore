@@ -1,4 +1,4 @@
-// Ported from the former pixel_show.py: the five pixel scenes in turn, 10 s each.
+// The five pixel scenes in turn, 10 s each.
 
 import * as ball from "./ball.mjs";
 import * as pinwheels from "./pinwheels.mjs";

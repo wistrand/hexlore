@@ -18,7 +18,7 @@ self-contained library (Node built-ins, no app state):
 | `groupTiles`, `predictTouchIds`                | pure helpers, also `encodeFrame`, `decodeTouch`, `layoutFrom`  |
 
 Users: `src/server.mjs` (the app; its simulator is a stand-in object with the same
-methods), `src/effect.mjs`, `src/pair.mjs`, and `effectContext()` in
+methods), `src/hexlore.mjs` (the CLI), and `effectContext()` in
 `src/effects/lib.mjs` (tile grouping).
 
 ## Contents
@@ -73,14 +73,21 @@ OpenThread. Confirming the chips needs the PCB markings.
 Poll the endpoint once a second rather than asking the user to time it. The token
 persists until `DELETE /api/v1/<token>`.
 
-`src/pair.mjs` does both steps: SSDP M-SEARCH for `nanoleaf:nl52`, `nl42`, `nl29`
-and `nanoleaf_aurora:light`, sent from every non-internal IPv4 interface (see the
-avahi/docker note in [gotchas.md](gotchas.md)), then the polling loop for 60 s. It
-writes `token.json` as `{auth_token, host, name, id}` with mode 0600 and never
-prints the token. `src/server.mjs` and `src/effect.mjs` take `host` from that file
-(fallback 192.168.50.108 for older files without it). `--find` only lists
-controllers. Discovery verified 2026-10-31; the pairing loop has not been run
+`node src/hexlore.mjs pair` does both steps (library `discover()` and `pair()`):
+SSDP M-SEARCH for `nanoleaf:nl52`, `nl42`, `nl29` and `nanoleaf_aurora:light`, sent
+from every non-internal IPv4 interface (see the avahi/docker note in
+[gotchas.md](gotchas.md)), then the polling loop for 60 s. It writes `token.json` as
+`{auth_token, host, name, id}` with mode 0600 and never prints the token; `--ip`
+skips discovery, `--force` re-pairs over a working token. `src/server.mjs` and the
+other `hexlore.mjs` commands take `host` from that file (fallback 192.168.50.108 for
+older files without it). `hexlore.mjs find` only lists controllers. Discovery verified 2026-10-31; the pairing loop has not been run
 against the device yet (needs the power button).
+
+Other `hexlore.mjs` commands: `run` (animations, below), `status`, `on`/`off`, `brightness`, `ct` (whole-panel
+white, 1500-4000 K), `effects`, `select`, `identify` (verified: flashes the panels),
+`layout` (tiles with touch ids), `touch` and `events` (live), and `cmd <name>`,
+which refuses the secret-bearing commands and needs `--write` for names not starting
+with get/request/is.
 
 ## REST API
 
@@ -105,7 +112,7 @@ event triggers a refetch of `/panelLayout/layout`. It also polls every 30 s in c
 an event is missed, keeps colors of zones that survive, and sends clients a named SSE
 `layout` event so the page re-renders. The page also refetches `/api/layout` on every
 SSE (re)connect, since a `layout` event sent while it was disconnected is lost.
-Device requests in `api()` time out after 5 s: refreshes run one at a time, so a
+Device requests (library `request()`) time out after 5 s: refreshes run one at a time, so a
 hung request would otherwise block layout refresh for Node's 5-minute default.
 On 2026-10-30, on snork, newly connected tiles lit but did not appear until a
 server restart; the cause was not confirmed (either of the above fits, as does
@@ -114,20 +121,22 @@ still untested after these fixes.
 
 Paint app server API (`src/server.mjs`):
 
-| Method     | Path                 | Purpose                                           |
-|------------|----------------------|---------------------------------------------------|
-| GET        | `/`, `/tiles`, files | static client from `docs/` (`index.html`, `tiles.html`) |
-| GET / POST | `/api/effects`, `/api/effect` | list effects + active / `{key}` start, `{key:null}` stop |
-| GET        | `/api/tiles`         | per tile: center, corners by o, touch id, predict |
-| GET        | `/api/layout`        | `sideLength` + zones (controller filtered out)    |
-| GET        | `/api/events`        | SSE: full state, then change sets; `layout` event |
-| POST       | `/api/paint`         | `{panelId: [r,g,b]}` change set                   |
-| POST       | `/api/fill`          | `{color}` for all zones                           |
-| GET        | `/api/scenes`        | all saved scenes                                  |
-| PUT/DELETE | `/api/scenes/<name>` | save (body = colors) / delete one scene           |
-| GET/POST   | `/api/brightness`    | device master brightness (`PUT /state`)           |
-| POST       | `/api/takeover`      | re-enable extControl                              |
-| POST       | `/api/touch`         | `{mode}`, `{brush}`, `{map}` (see Touch input)    |
+| Method     | Path                 | Purpose                                                                                            |
+|------------|----------------------|----------------------------------------------------------------------------------------------------|
+| GET        | `/`, `/tiles`, files | static client from `docs/` (`index.html`, `tiles.html`)                                            |
+| GET        | `/api/effects`       | effects (key, name, description) and the active key                                                |
+| POST       | `/api/effect`        | `{key}` starts an effect, `{key: null}` stops it                                                   |
+| GET        | `/api/tiles`         | per tile: center, corners by o, touch id, predicted ids                                            |
+| GET        | `/api/layout`        | `sideLength`, zones, `controller`, `sim`, sim `tiles`                                              |
+| GET        | `/api/events`        | SSE: colors, then change sets; `status`, `touch`, `effect`, `effectFrame`, `glow`, `layout` events |
+| POST       | `/api/paint`         | `{panelId: [r,g,b]}` change set                                                                    |
+| POST       | `/api/fill`          | `{color}` for all zones                                                                            |
+| GET        | `/api/scenes`        | all saved scenes                                                                                   |
+| PUT/DELETE | `/api/scenes/<name>` | save (body = colors) / delete one scene                                                            |
+| GET/POST   | `/api/brightness`    | device master brightness; POST needs `{value}`                                                     |
+| POST       | `/api/takeover`      | re-enable extControl                                                                               |
+| POST       | `/api/touch`         | `{mode}`, `{brush}`, `{map}` (see Touch input)                                                     |
+| POST       | `/api/sim/tiles`     | simulator only: `{tiles: [[q, r], ...]}`                                                           |
 
 ## Touch input
 
@@ -245,7 +254,7 @@ network key, PSKc), `getMijiaStatus` (token), `getDeviceAuthToken` or
   tile-to-controller bus traffic or firmware; not pursued.
 
 Effects (`src/effects/*.mjs`, picked in the Effects sheet on the page or run with
-`node src/effect.mjs <key> [seconds] [--keep]`): ported from the former Python
+`node src/hexlore.mjs run <key> [seconds] [--keep]`): ported from the former Python
 scripts (removed 2026-10-31), one module each: `sweep`, `corners`, `ball`,
 `pinwheels`, `fireworks`, `rain`, `heartbeat`, `pixel-show`, `moon`, `moon-phases`.
 `loadEffects()` in `lib.mjs` loads every module except `lib.mjs`, for both runners;
@@ -342,8 +351,9 @@ State ranges on this unit: brightness 0-100, ct 1500-4000 K, hue 0-360, sat 0-10
 center for radial patterns.
 
 This unit was 7 hexagons x 6 corner zones = 42 lit zones (shapeType 15), verified
-visually with the former `zones_demo.py` (now the `corners` effect); since 2026-10
-it is 20 hexagons (120 zones). The extra
+visually with the former `zones_demo.py` (now the `corners` effect). It grew to 14
+and then 20 hexagons in 2026-10 and has 19 (114 zones) as of 2026-10-31; use
+`node src/hexlore.mjs status` for the current count. The extra
 entry, `panelId 0` shapeType 12 at (72,74), does not light (inferred: controller).
 With 14 tiles it is 68 units from the nearest tile center (131,108) at -150 degrees,
 the direction of that tile's lower-left edge midpoint (apothem 58), so it sits about

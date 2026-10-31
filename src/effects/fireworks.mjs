@@ -1,4 +1,4 @@
-// Ported from the former pixel_show.py: rockets rise, slow down and burst into falling sparks.
+// Rockets rise, slow down and burst into falling sparks.
 
 import { Canvas, rand } from "./lib.mjs";
 
@@ -10,7 +10,7 @@ export function create({ zones }) {
   return {
     frame(t, dt) {
       if (Math.random() < 1.2 * dt) rockets.push([rand(0.15, 0.85), 0, rand(0.9, 1.3)]);
-      c.fade(0.82);
+      c.fade(0.82, dt);
       rockets = rockets.filter((r) => {
         r[1] += r[2] * dt;
         r[2] -= 0.9 * dt;
