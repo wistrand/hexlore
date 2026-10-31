@@ -56,6 +56,15 @@ OpenThread. Confirming the chips needs the PCB markings.
 Poll the endpoint once a second rather than asking the user to time it. The token
 persists until `DELETE /api/v1/<token>`.
 
+`src/pair.mjs` does both steps: SSDP M-SEARCH for `nanoleaf:nl52`, `nl42`, `nl29`
+and `nanoleaf_aurora:light`, sent from every non-internal IPv4 interface (see the
+avahi/docker note in [gotchas.md](gotchas.md)), then the polling loop for 60 s. It
+writes `token.json` as `{auth_token, host, name, id}` with mode 0600 and never
+prints the token. `src/server.mjs` and `src/effect.mjs` take `host` from that file
+(fallback 192.168.50.108 for older files without it). `--find` only lists
+controllers. Discovery verified 2026-10-31; the pairing loop has not been run
+against the device yet (needs the power button).
+
 ## REST API
 
 Base: `http://<ip>:16021/api/v1/<token>`. JSON bodies, `PUT` returns 204 on success.

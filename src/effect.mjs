@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url";
 import { effectContext, loadEffects } from "./effects/lib.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HOST = "192.168.50.108";
 const UDP_PORT = 60222;
 const FPS = 25;
 
@@ -32,7 +31,10 @@ if (!effects.has(key)) {
   process.exit(1);
 }
 
-const TOKEN = JSON.parse(fs.readFileSync(path.join(HERE, "..", "token.json"), "utf8")).auth_token;
+// token.json from src/pair.mjs: { auth_token, host }. Older files have no host.
+const CONFIG = JSON.parse(fs.readFileSync(path.join(HERE, "..", "token.json"), "utf8"));
+const HOST = CONFIG.host ?? "192.168.50.108";
+const TOKEN = CONFIG.auth_token;
 const BASE = `http://${HOST}:16021/api/v1/${TOKEN}`;
 async function api(method, p, body) {
   const res = await fetch(BASE + p, {

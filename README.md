@@ -1,74 +1,98 @@
 # hexlore
 
-What a Nanoleaf Elements hexagon set does on the wire, and tools built on it.
-Local network only: no cloud account, no Nanoleaf app after pairing, no
-third-party libraries.
+Paint and animate a Nanoleaf Elements hexagon wall from a browser, and make the
+tiles react when you touch them. Everything runs on your own network: no cloud
+account, no Nanoleaf app after pairing, and nothing to install besides Node.
 
-Findings, verified on an NL52 controller (firmware 12.4.1):
+hexlore is also a record of how the panels work. Much of it is not in Nanoleaf's
+documentation and was found by experiment, such as how a tile's touch sensor is
+identified. The notes are in `agent_docs/` and on a reference page served by the
+app.
 
-- Per-corner control: each hexagon is six LED zones with their own ids, driven
-  over the extControl v2 UDP stream.
-- Raw touch input: hover, down, hold, up and swipe per tile, about 7 readings a
-  second, from the UDP touch stream the device opens on request.
-- Touch ids are not layout ids. They derive from a tile's corner ids through a
-  reflected CRC-16 (polynomial 0x8005), so new tiles are recognized on first
-  touch without a mapping step.
-- Layout, controller position, panel optics (light guide, rim leakage) and
-  expansion limits, with sources and open questions.
+## What you can do
 
-The reference lives in `agent_docs/` (start with
-[CLAUDE.md](CLAUDE.md)) and on the `/tiles` page of the server below.
+- **Paint each tile corner by corner.** Every hexagon has six LEDs, one per
+  corner, and the app lets you set each one. A 3D preview shows roughly how the
+  wall will look, including how light spreads through a tile and leaks at its rim.
+- **Touch the wall.** Tiles can glow as your hand approaches, send a ripple across
+  the wall, or take the current brush color when you tap them. New tiles are
+  recognized automatically; there is no calibration step.
+- **Run animations.** Rain, fireworks, a bouncing ball, pinwheels, a heartbeat, a
+  full lunar cycle and more, picked from the app or started from the command line.
+  Each effect is one small file, so adding your own is straightforward.
+- **Save scenes**, undo and redo, and control panel brightness.
+- **Try it without hardware.** A simulator mode lets you build a tile layout in
+  the browser and paint it.
 
-## Tools
+## Getting started
 
-| Tool                  | Purpose                                                                    |
-|-----------------------|----------------------------------------------------------------------------|
-| `node src/server.mjs` | touch-paint app: paint corners from a browser, run effects, touch the panel to glow, ripple or paint; `/tiles` documents the hardware and protocol live |
-| `node src/effect.mjs` | run one effect from the command line, without the app                      |
+You need Node and an Elements controller on the same network.
 
-Effects (`src/effects/`): sweep and ripple, corner chase, bouncing ball,
-pinwheels, fireworks, rain, heartbeat, a pixel show of those, a crescent moon and
-moon phases. Each is one module; drop a new one in to add an effect.
-
-Code is in `src/`, the browser client in `docs/`, and runtime data (picture,
-scenes, touch map) in `data/`, which stays out of version control. Node only, no
-dependencies.
-
-## Setup
-
-1. Find the device IP (router DHCP list, or SSDP search for `nanoleaf:nl52`).
-2. Hold the controller power button 5-7 seconds until the LEDs flash.
-3. Within 30 seconds:
+1. Pair with the controller:
 
    ```bash
-   curl -X POST http://<ip>:16021/api/v1/new > token.json
+   node src/pair.mjs
    ```
 
-`token.json` is a secret. Keep it out of version control.
+   It finds the controller on your network, then asks you to hold the
+   controller's power button for 5 to 7 seconds until its LEDs flash. The access
+   token and the controller's address are saved to `token.json`. Keep that file
+   private: anyone with it can control your lights.
 
-## Usage
+2. Start the app:
 
-Turn on and pick an effect:
+   ```bash
+   node src/server.mjs
+   ```
+
+3. Open `http://<this machine>:8321` on a phone or computer on the same network.
+
+If the controller isn't found, pass its address from your router's device list:
+`node src/pair.mjs --ip <address>`. If its address changes later, run
+`node src/pair.mjs --find` to see the new one and pair again.
+
+Stopping the app with Ctrl-C puts back the effect the panels were showing before.
+
+To explore without a device: `node src/server.mjs 8322 --sim`.
+
+## Effects from the command line
 
 ```bash
-T=$(node -p 'require("./token.json").auth_token')
-curl -X PUT -d '{"on":{"value":true}}' http://<ip>:16021/api/v1/$T/state
-curl -X PUT -d '{"select":"Ember"}'    http://<ip>:16021/api/v1/$T/effects
+node src/effect.mjs --list      # what is available
+node src/effect.mjs rain 20     # run for 20 seconds, then restore the previous effect
+node src/effect.mjs moon --keep # leave the result up after Ctrl-C
 ```
 
-Run an effect for 20 seconds, then restore the previous effect (stop the paint
-app first; both stream to the same panels):
+Stop the app first; both stream to the same panels and would overwrite each other.
 
-```bash
-node src/effect.mjs --list
-node src/effect.mjs rain 20
-```
+## What hexlore documents
 
-Start the paint app on port 8321 and open it in a browser on the same network:
+Verified on an NL52 controller with firmware 12.4.1:
 
-```bash
-node src/server.mjs
-```
+- **Per-corner streaming.** The six LEDs of each tile are separate zones in the
+  layout and can be driven individually over the extControl v2 UDP stream.
+- **Raw touch data.** Besides gestures, the controller streams per-tile hover,
+  down, hold, up and swipe events with a strength value, about 7 times a second.
+- **Touch ids.** A tile reports touches under an id that does not appear in the
+  public layout. That id follows from the tile's six corner ids through a CRC-16,
+  which is how the app maps new tiles without asking you to touch them.
+- **Hardware notes.** Tile construction, how light spreads in a tile, where the
+  controller sits, expansion and power limits, and the controller's other local
+  commands, with sources and open questions marked.
+
+The `/tiles` page in the running app summarizes the protocol and shows your own
+tiles and their ids.
+
+## Project layout
+
+| Path          | Contents                                                          |
+|---------------|-------------------------------------------------------------------|
+| `src/`        | the server, pairing and effect command-line tools, `effects/`     |
+| `docs/`       | the browser app and the `/tiles` reference page                   |
+| `data/`       | your painting, saved scenes and touch map; not version controlled |
+| `agent_docs/` | protocol, hardware and troubleshooting notes                      |
+
+No dependencies beyond Node's built-in modules.
 
 Nanoleaf and Elements are trademarks of Nanoleaf. This project is not
 affiliated with or endorsed by Nanoleaf.

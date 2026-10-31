@@ -13,6 +13,7 @@ no third-party libraries: plain Node with built-in modules only (no npm deps).
 |-----------------------|--------------------------------------------------------------------------------------|
 | `src/server.mjs`      | touch-paint server (HTTP + SSE + UDP), touch and effect engines                      |
 | `src/effect.mjs`      | CLI: run one effect on the panels without the server                                 |
+| `src/pair.mjs`        | CLI: find controllers (SSDP), pair, write `token.json`                               |
 | `src/effects/`        | animations, one module per effect, for the server and the CLI; contract in `lib.mjs` |
 | `docs/`               | browser client, served from `src/server.mjs` as static files; no server code         |
 | `docs/index.html`     | paint page (SVG, 3D preview, dock with control sheets)                               |
@@ -22,7 +23,7 @@ no third-party libraries: plain Node with built-in modules only (no npm deps).
 | `data/scenes.json`    | saved paint scenes `{name: {panelId: [r,g,b]}}`                                      |
 | `data/touch-map.json` | touch id to tile corner zones, from prediction or "Map touch"                        |
 | `data/sim-*.json`     | simulator tiles/picture/scenes, separate from the real ones                          |
-| `token.json`          | API auth token `{"auth_token": "..."}`; secret, untracked                            |
+| `token.json`          | `{"auth_token", "host", "name", "id"}` from `pair.mjs`; secret, untracked            |
 | `agent_docs/`         | deep dives (linked below)                                                            |
 
 ## Device
@@ -38,6 +39,8 @@ no third-party libraries: plain Node with built-in modules only (no npm deps).
 ## Commands
 
 ```bash
+node src/pair.mjs [--ip A]         # find a controller, pair (hold power button), save token.json
+node src/pair.mjs --find           # list controllers on the LAN and exit (--force: re-pair)
 node src/server.mjs [port]         # touch-paint app on 0.0.0.0:8321; Ctrl-C restores effect
 node src/server.mjs 8322 --sim     # no device: simulated tiles, editable from the page (Layout)
 node src/effect.mjs --list         # effects in src/effects/

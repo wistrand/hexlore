@@ -24,11 +24,13 @@ function serveStatic(url, res) {
   res.end(fs.readFileSync(file));
   return true;
 }
-const HOST = "192.168.50.108";
 const UDP_PORT = 60222;
 const SIM = process.argv.includes("--sim");
 const PORT = Number(process.argv.slice(2).find((a, i, all) => /^\d+$/.test(a) && all[i - 1] !== "--tag") ?? 8321);
-const TOKEN = SIM ? "" : JSON.parse(fs.readFileSync(path.join(HERE, "..", "token.json"), "utf8")).auth_token;
+// token.json from src/pair.mjs: { auth_token, host }. Older files have no host.
+const CONFIG = SIM ? {} : JSON.parse(fs.readFileSync(path.join(HERE, "..", "token.json"), "utf8"));
+const HOST = CONFIG.host ?? "192.168.50.108";
+const TOKEN = CONFIG.auth_token ?? "";
 const BASE = `http://${HOST}:16021/api/v1/${TOKEN}`;
 // --tag X keeps a separate set of data files (e.g. for a throwaway test instance).
 const TAG = process.argv.includes("--tag") ? process.argv[process.argv.indexOf("--tag") + 1] : "";
