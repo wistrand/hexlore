@@ -36,11 +36,11 @@ const dataFile = (name) => path.join(DATA, `${SIM ? "sim-" : ""}${TAG ? `${TAG}-
 
 // The controller, or with --sim the simulated one from src/sim.mjs (same methods, plus
 // an editable tile set). token.json from `node src/hexlore.mjs pair` holds
-// { auth_token, host }; older files have no host. Each REST request times out after 5 s, which matters for
+// { auth_token, host }. Each REST request times out after 5 s, which matters for
 // refreshLayout(): it runs one request at a time, and the controller can stall while
 // taking in new tiles.
 const device = SIM ? new SimDevice({ tilesFile: dataFile("layout.json") })
-  : Nanoleaf.fromFile(path.join(HERE, "..", "token.json"), { fallbackHost: "192.168.50.108" });
+  : Nanoleaf.fromFile(path.join(HERE, "..", "token.json"));
 
 let layout = await device.layout();
 let zones = layout.zones;

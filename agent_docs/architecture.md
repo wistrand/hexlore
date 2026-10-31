@@ -79,8 +79,8 @@ from every non-internal IPv4 interface (see the avahi/docker note in
 [gotchas.md](gotchas.md)), then the polling loop for 60 s. It writes `token.json` as
 `{auth_token, host, name, id}` with mode 0600 and never prints the token; `--ip`
 skips discovery, `--force` re-pairs over a working token. `src/server.mjs` and the
-other `hexlore.mjs` commands take `host` from that file (fallback 192.168.50.108 for
-older files without it). `hexlore.mjs find` only lists controllers. Discovery verified 2026-10-31; the pairing loop has not been run
+other `hexlore.mjs` commands take `host` from that file; a file without `host` is
+an error that asks to pair again. `hexlore.mjs find` only lists controllers. Discovery verified 2026-10-31; the pairing loop has not been run
 against the device yet (needs the power button).
 
 Other `hexlore.mjs` commands: `run` (animations, below), `status`, `on`/`off`, `brightness`, `ct` (whole-panel
@@ -114,7 +114,7 @@ an event is missed, keeps colors of zones that survive, and sends clients a name
 SSE (re)connect, since a `layout` event sent while it was disconnected is lost.
 Device requests (library `request()`) time out after 5 s: refreshes run one at a time, so a
 hung request would otherwise block layout refresh for Node's 5-minute default.
-On 2026-10-30, on snork, newly connected tiles lit but did not appear until a
+On 2026-10-30, on a second (macOS) host, newly connected tiles lit but did not appear until a
 server restart; the cause was not confirmed (either of the above fits, as does
 the controller not yet having registered them). Live detection of added tiles is
 still untested after these fixes.

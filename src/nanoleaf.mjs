@@ -45,11 +45,11 @@ export class Nanoleaf {
     this.stops = new Set();
   }
 
-  // Reads { auth_token, host } as written by pair tools; `fallbackHost` for files
-  // without a host.
-  static fromFile(file, { fallbackHost } = {}) {
+  // Reads { auth_token, host } as written by pair tools.
+  static fromFile(file) {
     const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
-    return new Nanoleaf({ host: cfg.host ?? fallbackHost, token: cfg.auth_token });
+    if (!cfg.host) throw new Error(`${file} has no "host": pair again, or add the controller's IP as "host"`);
+    return new Nanoleaf({ host: cfg.host, token: cfg.auth_token });
   }
 
   // Raw REST call below /api/v1/<token>. Returns parsed JSON, or null for an empty body.

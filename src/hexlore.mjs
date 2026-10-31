@@ -11,7 +11,6 @@ import { effectContext, loadEffects } from "./effects/lib.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN_FILE = path.join(HERE, "..", "token.json");
-const FALLBACK_HOST = "192.168.50.108"; // for token.json files written before host was stored
 
 const USAGE = `usage: node src/hexlore.mjs <command> [args]
   find                    list Nanoleaf controllers on the network
@@ -32,8 +31,13 @@ const USAGE = `usage: node src/hexlore.mjs <command> [args]
   events                  print device events live until Ctrl-C
   cmd <name> [--write]    send a device command, print the reply (writes need --write)`;
 
-// Commands whose replies carry network keys or tokens; never printed.
-const SECRET = new Set(["getThreadNetworkParameters", "getMijiaStatus", "getDeviceAuthToken", "getEventEncryptionKeyAndIVBase"]);
+// Commands whose replies carry network keys or tokens; never printed. Compared without
+// case, in case the controller matches names loosely.
+const SECRET = new Set(["getThreadNetworkParameters", "getMijiaStatus", "getDeviceAuthToken", "getEventEncryptionKeyAndIVBase"]
+  .map((n) => n.toLowerCase()));
+// Read commands are named get*, request* or is* followed by a capitalized word
+// (getHeatmap, requestTouchConfig, isSceneChangeAnimationEnabled); anything else may write.
+const READ_COMMAND = /^(get|request|is)[A-Z]/;
 const TOUCH_NAMES = ["hover", "down", "hold", "up", "swipe"];
 const EVENT_NAMES = { 1: "state", 2: "layout", 3: "effects", 4: "gesture" };
 
@@ -46,7 +50,11 @@ const number = (v, name) => {
   if (v === undefined || !Number.isFinite(n)) throw new Error(`${name}: expected a number`);
   return n;
 };
-const time = () => new Date().toISOString().slice(11, 23);
+// Local wall-clock time with milliseconds, for the live watchers.
+const time = () => {
+  const d = new Date();
+  return `${d.toTimeString().slice(0, 8)}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+};
 
 if (!cmd || cmd === "help" || cmd === "--help") {
   console.log(USAGE);
@@ -67,12 +75,11 @@ async function find() {
 async function pairCommand() {
   if (fs.existsSync(TOKEN_FILE) && !flags.has("--force")) {
     const cur = JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8"));
-    const host = cur.host ?? FALLBACK_HOST;
-    if (cur.auth_token && (await checkToken(host, cur.auth_token))) {
-      console.log(`token.json already works with the controller at ${host}. Use --force to pair again.`);
+    if (cur.host && cur.auth_token && (await checkToken(cur.host, cur.auth_token))) {
+      console.log(`token.json already works with the controller at ${cur.host}. Use --force to pair again.`);
       return;
     }
-    console.log("token.json exists but its token is not accepted; pairing again.");
+    console.log(cur.host ? "token.json exists but its token is not accepted; pairing again." : "token.json has no controller address; pairing again.");
   }
   let device = option("--ip") && { ip: option("--ip"), name: "", id: "", model: "" };
   if (!device) {
@@ -208,8 +215,8 @@ async function deviceCommand(nl) {
     case "cmd": {
       const name = args[0];
       if (!name) throw new Error("cmd: name a device command, e.g. requestTouchConfig");
-      if (SECRET.has(name)) throw new Error(`${name} returns network keys or tokens; not printed by this tool`);
-      if (!/^(get|request|is)/.test(name) && !flags.has("--write")) {
+      if (SECRET.has(name.toLowerCase())) throw new Error(`${name} returns network keys or tokens; not printed by this tool`);
+      if (!READ_COMMAND.test(name) && !flags.has("--write")) {
         throw new Error(`${name} may change device state; add --write if that is what you want`);
       }
       const reply = await nl.command(name);
@@ -233,7 +240,7 @@ try {
     throw new Error(`unknown animation "${args[0]}"; list them with: node src/hexlore.mjs run`);
   } else {
     if (!fs.existsSync(TOKEN_FILE)) throw new Error("no token.json yet: run node src/hexlore.mjs pair");
-    const nl = Nanoleaf.fromFile(TOKEN_FILE, { fallbackHost: FALLBACK_HOST });
+    const nl = Nanoleaf.fromFile(TOKEN_FILE);
     if (cmd === "run") await runEffect(nl, effects, args[0], args[1] ? number(args[1], "seconds") : Infinity);
     else await deviceCommand(nl);
     nl.close();

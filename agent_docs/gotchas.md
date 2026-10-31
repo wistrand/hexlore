@@ -16,7 +16,7 @@
 - **SVG filters on lines need user-space regions.** The default filter region is relative to the element's bounding box; a horizontal `<line>` has zero height, so the region collapses and the blurred stroke is cropped thinner than diagonal lines. `docs/index.html` sets `filterUnits="userSpaceOnUse"` with a region covering the whole drawing.
 - **`pgrep -f`/`pkill -f` match the calling shell too.** A pattern taken from a server's command line also matches the bash command running pgrep, so `kill $(pgrep -f ...)` kills your own shell. Kill by a PID you recorded, or use a pattern that can't appear in your own command.
 - **macOS blocks LAN access for unpermitted processes (macOS 15+).** A server started with `nohup` over SSH reaches the device only while the SSH session is open; after it exits, every request fails with `EHOSTUNREACH`. Tailscale traffic is unaffected, so the web UI still loads while the device is unreachable. On macOS, start `src/server.mjs` from Terminal.app and allow the Local Network prompt. See the finding below.
-- **IP comes from DHCP.** If 192.168.50.108 stops answering, rediscover via SSDP `ST: nanoleaf:nl52` before assuming the device is down.
+- **IP comes from DHCP.** If the controller stops answering at the address in `token.json`, run `node src/hexlore.mjs find` (SSDP `ST: nanoleaf:nl52`) before assuming it is down, then pair again or update `host`.
 
 ## Findings
 
@@ -34,11 +34,11 @@
 
 ### macOS Local Network privacy blocks a detached server
 
-- **Symptom:** on a macOS 26 host, `src/server.mjs` started with `nohup ... &` over SSH served the page, but the panels did not react. The log showed `EHOSTUNREACH` (and once `EPIPE`) for 192.168.50.108. The same `fetch` run inside an open SSH session got 401 as expected.
+- **Symptom:** on a macOS 26 host, `src/server.mjs` started with `nohup ... &` over SSH served the page, but the panels did not react. The log showed `EHOSTUNREACH` (and once `EPIPE`) for the controller's address. The same `fetch` run inside an open SSH session got 401 as expected.
 - **Diagnosis:** Local Network privacy, per Apple [TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy). It gates outgoing traffic to Wi-Fi/Ethernet subnets, multicast and broadcast, but not VPN interfaces. Automatically allowed: `launchd` daemons, root processes, and command-line tools run from Terminal or over SSH plus their children. `launchd` agents are not exempt. Inferred, not documented: the SSH exemption ends when the session exits, which matches a detached test script failing from its first request.
 - **Takeaway:**
   - Run the server from Terminal.app and grant the prompt. Over SSH, `open -a Terminal <script>.command` launches it under Terminal.
-  - For a headless service, use one of the two documented options: a `launchd` daemon (`/Library/LaunchDaemons`, `UserName` set to the user), or (macOS 15.5+) `sudo defaults write com.apple.network.local-network AllowedWiFiLocalNetworkAddresses -array "192.168.50.108/32"` plus a reboot, which exempts that address for every process. Use `AllowedEthernetLocalNetworkAddresses` on wired hosts. Neither option was tested here.
+  - For a headless service, use one of the two documented options: a `launchd` daemon (`/Library/LaunchDaemons`, `UserName` set to the user), or (macOS 15.5+) `sudo defaults write com.apple.network.local-network AllowedWiFiLocalNetworkAddresses -array "<controller-ip>/32"` plus a reboot, which exempts that address for every process. Use `AllowedEthernetLocalNetworkAddresses` on wired hosts. Neither option was tested here.
 
 ### Touch ids are not layout ids
 
@@ -54,6 +54,6 @@
 
 ### Two streamers at once go unnoticed
 
-- **Symptom:** the panels flicker between two pictures, or paint and touch seem to undo themselves. Happens when two clients stream to the same controller: two servers (for example here and on snork), a server plus `hexlore.mjs run`, or another extControl app.
+- **Symptom:** the panels flicker between two pictures, or paint and touch seem to undo themselves. Happens when two clients stream to the same controller: two servers (for example on two machines), a server plus `hexlore.mjs run`, or another extControl app.
 - **Diagnosis:** every streamer keeps the controller in `*ExtControl*` and sends full UDP frames to it, so the selected effect and power state never change. The controller does not report who streams, and one client cannot see another's frames. The server's status check catches only clients that switch the panels away from streaming (another effect, power off, the Nanoleaf app); those show as "panels show X" with a Resume button on the page.
 - **Takeaway:** run one streamer per controller. Stop the server before `hexlore.mjs run`, and check other hosts before starting a second server. Detection is not implemented. Options considered (2026-10-31): a LAN multicast heartbeat between hexlore processes (would catch hexlore instances only), or watching for the effects event a second client's `display extControl` command might trigger (untested whether the controller emits one while already streaming; would also catch other apps). A lock stored on the device was ruled out: it would mean writing persistent device settings.
