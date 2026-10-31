@@ -31,13 +31,14 @@ no third-party libraries: plain Node with built-in modules only (no npm deps).
 
 ## Device
 
-| Field    | Value                                                                             |
-|----------|-----------------------------------------------------------------------------------|
-| Model    | NL52 (Elements), name "Elements 66C5"                                             |
-| IP       | 192.168.50.108 (DHCP, may change)                                                 |
-| MAC      | 80:8a:f7:0d:66:c5                                                                 |
-| Firmware | 12.4.1, hardware 1.3-0                                                            |
-| Zones    | 19 hexagons x 6 corners = 114 lit + 1 controller entry (2026-10-31; changes)      |
+| Field    | Value                                                                    |
+|----------|--------------------------------------------------------------------------|
+| Model    | NL52 (Elements)                                                          |
+| Firmware | tested on 12.4.1, hardware 1.3-0                                         |
+| Zones    | 6 corner zones per hexagon, plus 1 controller entry in the layout        |
+| Host     | `host` in `token.json`, or `node src/hexlore.mjs find`; DHCP, may change |
+
+This machine's controller (IP, MAC, tile count): see `CLAUDE.local.md` (untracked; may not exist).
 
 ## Commands
 
