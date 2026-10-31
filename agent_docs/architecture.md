@@ -80,8 +80,9 @@ from every non-internal IPv4 interface (see the avahi/docker note in
 `{auth_token, host, name, id}` with mode 0600 and never prints the token; `--ip`
 skips discovery, `--force` re-pairs over a working token. `src/server.mjs` and the
 other `hexlore.mjs` commands take `host` from that file; a file without `host` is
-an error that asks to pair again. `hexlore.mjs find` only lists controllers. Discovery verified 2026-10-31; the pairing loop has not been run
-against the device yet (needs the power button).
+an error that asks to pair again. `hexlore.mjs find` only lists controllers.
+Discovery and pairing (button hold, polling, writing `token.json`) verified on the
+device 2026-10-31.
 
 Other `hexlore.mjs` commands: `run` (animations, below), `status`, `on`/`off`, `brightness`, `ct` (whole-panel
 white, 1500-4000 K), `effects`, `select`, `identify` (verified: flashes the panels),
