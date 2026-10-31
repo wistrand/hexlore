@@ -206,7 +206,7 @@ counter; what else goes into the CRC is unknown.
   tile added later was mapped by prediction on its first touch. Moving a tile is
   untested.
 - The touch id is the hexagon's own panel id. The Nanoleaf Android app (12.0.0,
-  decompiled) names the shape types: 12 `ULP_CONTROLLER`, 14 `APEX_HEX`, 15
+  decompiled and analyzed with [cupella](https://wistrand.github.io/cupella/)) names the shape types: 12 `ULP_CONTROLLER`, 14 `APEX_HEX`, 15
   `APEX_KITE` ("Apex" is the Elements codename, kites are the corner zones). Its
   layout comes from a binary TLV (version 2; 13 bytes per panel: id u16, x i32,
   y i32, o i16, shape u8) that lists an `APEX_HEX` entry per tile next to its six

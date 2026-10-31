@@ -111,7 +111,7 @@ data: {"events":[{"panelId":-1,"gesture":5}]}</code></pre>
 <p class="note">Packets arrive about 7 times a second while anything is touched or near a tile, several records per packet when several tiles are involved. Resolution is one reading per tile, not per corner.</p>
 
 <h2 id="ids">Corner ids and touch ids</h2>
-<p>The touch id is not in the REST layout, but it can be computed from the tile's corner ids. Model fitted to 20 tiles mapped by hand; it predicted the ids of tiles added later, and it matches all 29 tiles in three sample layouts from other installations found in the Nanoleaf Android app.</p>
+<p>The touch id is not in the REST layout, but it can be computed from the tile's corner ids. Model fitted to 20 tiles mapped by hand; it predicted the ids of tiles added later, and it matches all 29 tiles in three sample layouts from other installations found in the Nanoleaf Android app. The app was decompiled and analyzed with <a href="https://wistrand.github.io/cupella/">cupella</a>, which is also how the hexagon-level id described below was found.</p>
 <p>The touch id is the hexagon's own panel id. The app's internal layout lists each tile as an <code>APEX_HEX</code> entry (shape type 14) next to its six <code>APEX_KITE</code> corner zones (type 15); the REST API leaves the type 14 entries out. In that layout the hexagon's <code>o</code> is the first kite's <code>o</code> minus 60.</p>
 <ol>
 <li>Sort a tile's six corners by raw <code>o</code>, rising. Call the first corner's hidden counter value <code>j</code>.</li>

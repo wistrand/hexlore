@@ -121,7 +121,9 @@ Verified on an NL52 controller with firmware 12.4.1:
   down, hold, up and swipe events with a strength value, about 7 times a second.
 - **Touch ids.** A tile reports touches under an id that does not appear in the
   public layout. That id follows from the tile's six corner ids through a CRC-16,
-  which is how the app maps new tiles without asking you to touch them.
+  which is how the app maps new tiles without asking you to touch them. The model
+  was confirmed against tile layouts found in Nanoleaf's Android app, analyzed with
+  [cupella](https://wistrand.github.io/cupella/).
 - **Hardware notes.** Tile construction, how light spreads in a tile, where the
   controller sits, expansion and power limits, and the controller's other local
   commands, with sources and open questions marked.
